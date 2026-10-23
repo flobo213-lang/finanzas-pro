@@ -1,0 +1,32 @@
+name: GitClaw Agent
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run GitClaw Agent
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PI_PROVIDER: "openrouter"
+          PI_MODEL: "qwen/qwen3-coder:free"
+        run: bunx pi --mode json --provider openrouter --model qwen/qwen3-coder:free -p "Resuelve el issue. Haz los cambios en el código, commit y abre un Pull Request."
