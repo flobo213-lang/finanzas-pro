@@ -286,15 +286,9 @@ class ApiService {
     };
   }
 
-  static Future<Map<String, dynamic>> buscarTrabajadorCompleto(
-      String cedula) async {
-    final cache = await CacheService.leerTrabajador(cedula);
-    if (cache != null && cache['encontrado'] == true) {
-      _refrescarTrabajadorBackground(cedula);
-      return cache;
-    }
-    return await _buscarTrabajadorServidor(cedula);
-  }
+static Future<Map<String, dynamic>> buscarTrabajadorCompleto(String cedula) async {
+  return await _buscarTrabajadorServidor(cedula);
+}
 
   static Future<Map<String, dynamic>> _buscarTrabajadorServidor(
       String cedula) async {
