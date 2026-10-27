@@ -419,6 +419,143 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
     );
   }
 
+  void _cargarDatosTrabajador(Map<String, dynamic> res) {
+    _encontrado = true;
+    _nombreTrabajador = res['nombre'] ?? '';
+    final cedula = (res['cedula'] ?? '').toString();
+    if (cedula.isNotEmpty) {
+      _cedulaCtrl.text = cedula;
+    }
+    _sueldoBase = (res['sueldoBase'] as num?)?.toDouble() ?? 0.0;
+    _ayudaFamiliar = (res['ayudaFamiliar'] as num?)?.toDouble() ?? 0.0;
+    _bonoAlimenticio =
+        (res['bonoAlimenticio'] as num?)?.toDouble() ?? 0.0;
+    _deudaPendiente =
+        _r2((res['deudaPendiente'] as num?)?.toDouble() ?? 0.0);
+    _fechaIngresoStr =
+        res['fechaIngreso'] ?? DateTime.now().toString().substring(0, 10);
+
+    final estadoStr = (res['estado'] ?? '').toString().toUpperCase();
+    _trabajadorInactivo = estadoStr == 'INACTIVO' ||
+        estadoStr == 'FINALIZADO' ||
+        estadoStr == 'EGRESADO';
+
+    final fe = (res['fechaEgreso'] ?? '').toString();
+    if (fe.isNotEmpty && fe.length >= 10) {
+      final parsed = DateTime.tryParse(fe);
+      if (parsed != null) _fechaEgresoSeleccionada = parsed;
+    }
+
+    _aplicarDescuentoDeuda = false;
+    _monedaDescuento = "USD";
+    if (_deudaPendiente > 0 && _deudaPendiente >= 5.0) {
+      _descuentoDeudaCtrl.text = "5.00";
+    } else {
+      _descuentoDeudaCtrl.text = _deudaPendiente.toStringAsFixed(2);
+    }
+
+    if (_trabajadorInactivo) {
+      _tipoOperacion = "Liquidación / Finiquito";
+    }
+
+    _fuentesPago.clear();
+
+    _adicionales.clear();
+    if (res['adicionales'] is List) {
+      int i = 0;
+      for (var ad in res['adicionales']) {
+        if (ad is Map) {
+          _adicionales.add({
+            "id": "adic_${DateTime.now().microsecondsSinceEpoch}_$i",
+            "categoria": ad['categoria']?.toString() ?? 'Otro',
+            "monto": _parseNum(ad['monto']?.toString() ?? '0'),
+          });
+          i++;
+        }
+      }
+    }
+    _recalcularAdicionales();
+    if (cedula.isNotEmpty) {
+      _cargarHistorialPrestamos(cedula);
+    }
+    _calcularValores();
+  }
+
+  void _mostrarResultadosBusqueda(List<dynamic> resultados) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    "Coincidencias encontradas",
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0F52BA),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 20),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: resultados.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final item =
+                        Map<String, dynamic>.from(resultados[index] as Map);
+                    final nombre = item['nombre'] ?? 'Sin Nombre';
+                    final cedula = item['cedula'] ?? '';
+                    final cargo = item['cargo'] ?? '';
+
+                    return ListTile(
+                      dense: true,
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      title: Text(
+                        nombre,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                      subtitle: Text(
+                        "Cédula: V-$cedula${cargo.toString().isNotEmpty ? ' · Cargo: $cargo' : ''}",
+                        style:
+                            const TextStyle(fontSize: 10, color: Colors.black54),
+                      ),
+                      trailing: const Icon(Icons.chevron_right, size: 18),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        setState(() {
+                          _cargarDatosTrabajador(item);
+                        });
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _buscarTrabajador() async {
     final cedula = _cedulaCtrl.text.trim();
     if (cedula.isEmpty) return;
@@ -429,73 +566,37 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
       final res = await ApiService.buscarTrabajadorCompleto(cedula);
       if (!mounted) return;
 
-      setState(() {
-        _cargando = false;
-        if (res['encontrado'] == true) {
-          _encontrado = true;
-          _nombreTrabajador = res['nombre'] ?? '';
-          _sueldoBase = (res['sueldoBase'] as num?)?.toDouble() ?? 0.0;
-          _ayudaFamiliar = (res['ayudaFamiliar'] as num?)?.toDouble() ?? 0.0;
-          _bonoAlimenticio =
-              (res['bonoAlimenticio'] as num?)?.toDouble() ?? 0.0;
-          _deudaPendiente =
-              _r2((res['deudaPendiente'] as num?)?.toDouble() ?? 0.0);
-          _fechaIngresoStr =
-              res['fechaIngreso'] ?? DateTime.now().toString().substring(0, 10);
+      final resultados = res['resultados'] is List
+          ? List<dynamic>.from(res['resultados'])
+          : [];
 
-          final estadoStr = (res['estado'] ?? '').toString().toUpperCase();
-          _trabajadorInactivo = estadoStr == 'INACTIVO' ||
-              estadoStr == 'FINALIZADO' ||
-              estadoStr == 'EGRESADO';
-
-          final fe = (res['fechaEgreso'] ?? '').toString();
-          if (fe.isNotEmpty && fe.length >= 10) {
-            final parsed = DateTime.tryParse(fe);
-            if (parsed != null) _fechaEgresoSeleccionada = parsed;
-          }
-
-          _aplicarDescuentoDeuda = false;
-          _monedaDescuento = "USD";
-          if (_deudaPendiente > 0 && _deudaPendiente >= 5.0) {
-            _descuentoDeudaCtrl.text = "5.00";
-          } else {
-            _descuentoDeudaCtrl.text = _deudaPendiente.toStringAsFixed(2);
-          }
-
-          if (_trabajadorInactivo) {
-            _tipoOperacion = "Liquidación / Finiquito";
-          }
-
-          _fuentesPago.clear();
-
-          _adicionales.clear();
-          if (res['adicionales'] is List) {
-            int i = 0;
-            for (var ad in res['adicionales']) {
-              if (ad is Map) {
-                _adicionales.add({
-                  "id": "adic_${DateTime.now().microsecondsSinceEpoch}_$i",
-                  "categoria": ad['categoria']?.toString() ?? 'Otro',
-                  "monto": _parseNum(ad['monto']?.toString() ?? '0'),
-                });
-                i++;
-              }
-            }
-          }
-          _recalcularAdicionales();
-          _cargarHistorialPrestamos(cedula);
-          _calcularValores();
-        } else {
+      if (resultados.length > 1) {
+        setState(() {
+          _cargando = false;
+        });
+        _mostrarResultadosBusqueda(resultados);
+      } else if (res['encontrado'] == true || resultados.length == 1) {
+        final workerData = resultados.length == 1
+            ? Map<String, dynamic>.from(resultados.first as Map)
+            : res;
+        setState(() {
+          _cargando = false;
+          _cargarDatosTrabajador(workerData);
+        });
+      } else {
+        setState(() {
+          _cargando = false;
           _encontrado = false;
           _trabajadorInactivo = false;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content: Text(res['debug'] ?? "Trabajador no encontrado",
-                    style: const TextStyle(fontSize: 11)),
-                backgroundColor: Colors.red.shade900),
-          );
-        }
-      });
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(res['debug'] ?? "Trabajador no encontrado",
+                style: const TextStyle(fontSize: 11)),
+            backgroundColor: Colors.red.shade900,
+          ),
+        );
+      }
     } catch (e, st) {
       debugPrint('Error búsqueda trabajador: $e\n$st');
       if (mounted) setState(() => _cargando = false);
