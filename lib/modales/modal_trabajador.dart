@@ -22,6 +22,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
       NumberFormat.currency(locale: 'es_VE', symbol: '', decimalDigits: 2);
 
   final TextEditingController _cedulaCtrl = TextEditingController();
+  final FocusNode _cedulaFocusNode = FocusNode();
   final TextEditingController _tasaEspecialCtrl = TextEditingController();
   final TextEditingController _montoCtrl = TextEditingController();
   final TextEditingController _descuentoDeudaCtrl =
@@ -107,11 +108,37 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
   @override
   void dispose() {
     _cedulaCtrl.dispose();
+    _cedulaFocusNode.dispose();
     _tasaEspecialCtrl.dispose();
     _montoCtrl.dispose();
     _descuentoDeudaCtrl.dispose();
     _montoFuenteTmpCtrl.dispose();
     super.dispose();
+  }
+
+  void _prepararSiguienteTrabajador() {
+    setState(() {
+      _cedulaCtrl.clear();
+      _encontrado = false;
+      _trabajadorInactivo = false;
+      _nombreTrabajador = "";
+      _sueldoBase = 0.0;
+      _ayudaFamiliar = 0.0;
+      _bonoAlimenticio = 0.0;
+      _deudaPendiente = 0.0;
+      _historialPrestamos.clear();
+      _adicionales.clear();
+      _totalAdicionalesUSD = 0.0;
+      _descuentoDeudaCtrl.text = "0.00";
+      _aplicarDescuentoDeuda = false;
+      _montoFuenteTmpCtrl.clear();
+      _montoCtrl.clear();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _cedulaFocusNode.requestFocus();
+      }
+    });
   }
 
   // ─────────────────────────────────────────────
@@ -465,8 +492,6 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
           if (_trabajadorInactivo) {
             _tipoOperacion = "Liquidación / Finiquito";
           }
-
-          _fuentesPago.clear();
 
           _adicionales.clear();
           if (res['adicionales'] is List) {
@@ -969,7 +994,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                     InkWell(
                       onTap: () {
                         Navigator.pop(context);
-                        Navigator.pop(context, true);
+                        _prepararSiguienteTrabajador();
                       },
                       child: const Icon(Icons.close,
                           size: 16, color: Colors.white),
@@ -1085,6 +1110,9 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                                   fontSize: 10, fontWeight: FontWeight.bold)),
                           onPressed: () async {
                             await _imprimirRecibo(datos, true);
+                            if (!context.mounted) return;
+                            Navigator.pop(context);
+                            _prepararSiguienteTrabajador();
                           },
                         ),
                       ),
@@ -1106,7 +1134,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                             await _imprimirRecibo(datos, false);
                             if (!context.mounted) return;
                             Navigator.pop(context);
-                            Navigator.pop(context, true);
+                            _prepararSiguienteTrabajador();
                           },
                         ),
                       ),
@@ -1269,6 +1297,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                             height: 36,
                             child: TextField(
                               controller: _cedulaCtrl,
+                              focusNode: _cedulaFocusNode,
                               keyboardType: TextInputType.text,
                               style: const TextStyle(fontSize: 11),
                               textInputAction: TextInputAction.search,
