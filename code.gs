@@ -396,6 +396,7 @@ function buscarTrabajadorCompleto(params) {
   
   var data = sheet.getDataRange().getValues();
   var cleanBusquedaNum = busqueda.replace(/[^0-9]/g, "");
+  var resultados = [];
   
   for (var i = 1; i < data.length; i++) {
     var row = data[i];
@@ -417,8 +418,7 @@ function buscarTrabajadorCompleto(params) {
       if (row[12]) {
         try { adicionales = JSON.parse(row[12].toString()); if (!Array.isArray(adicionales)) adicionales = []; } catch (e) { adicionales = []; }
       }
-      return {
-        status: "SUCCESS", encontrado: true,
+      resultados.push({
         nombre: row[1] ? row[1].toString() : "Sin Nombre",
         cedula: cedulaFila, 
         cargo: row[3] ? row[3].toString() : "",
@@ -431,10 +431,32 @@ function buscarTrabajadorCompleto(params) {
         bonoAlimenticio: limpiarNumero(row[10] || 0),
         fechaEgreso: row[11] ? row[11].toString().substring(0, 10) : "", 
         adicionales: adicionales
-      };
+      });
     }
   }
-  return { status: "SUCCESS", encontrado: false, debug: "Trabajador no encontrado" };
+
+  if (resultados.length > 0) {
+    var primerRes = resultados[0];
+    return {
+      status: "SUCCESS",
+      encontrado: true,
+      resultados: resultados,
+      nombre: primerRes.nombre,
+      cedula: primerRes.cedula,
+      cargo: primerRes.cargo,
+      fechaIngreso: primerRes.fechaIngreso,
+      sueldoBase: primerRes.sueldoBase,
+      ayudaFamiliar: primerRes.ayudaFamiliar,
+      frecuencia: primerRes.frecuencia,
+      estado: primerRes.estado,
+      deudaPendiente: primerRes.deudaPendiente,
+      bonoAlimenticio: primerRes.bonoAlimenticio,
+      fechaEgreso: primerRes.fechaEgreso,
+      adicionales: primerRes.adicionales
+    };
+  }
+
+  return { status: "SUCCESS", encontrado: false, resultados: [], debug: "Trabajador no encontrado" };
 }
 
 // ============================================================================
