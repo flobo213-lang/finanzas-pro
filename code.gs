@@ -3605,6 +3605,26 @@ function obtenerPendientesPorPagar() {
   if (!sheetHistorial) return { status: "ERROR", mensaje: "Falta HISTORIAL" };
   if (!sheetSaldos) return { status: "ERROR", mensaje: "Falta SALDOS" };
 
+  var fechaHoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
+  var cedulaBuscada = (payload.cedula || "").toString().trim();
+
+  if (cedulaBuscada !== "") {
+    var histData = sheetHistorial.getDataRange().getValues();
+    for (var h = 1; h < histData.length; h++) {
+      var rowH = histData[h];
+      var tipoH = rowH[2] ? rowH[2].toString().toUpperCase() : "";
+      if (tipoH === "PAGO_NOMINA" || tipoH === "LIQUIDACION_FINAL") {
+        var fechaH = _normalizarFecha(rowH[1], "America/Caracas");
+        if (fechaH === fechaHoy) {
+          var conceptoH = rowH[9] ? rowH[9].toString() : "";
+          if (conceptoH.indexOf(cedulaBuscada) !== -1) {
+            return { status: "ERROR", mensaje: "Este trabajador ya fue pagado hoy. Verifica el historial." };
+          }
+        }
+      }
+    }
+  }
+
   var idempotenciaKey = payload.idempotenciaKey || "";
   if (idempotenciaKey !== "") {
     var histCheck = sheetHistorial.getDataRange().getValues();
