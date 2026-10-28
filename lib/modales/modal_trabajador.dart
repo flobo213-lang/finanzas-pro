@@ -448,6 +448,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
 
   void _seleccionarTrabajador(Map<String, dynamic> res) {
     _encontrado = true;
+    _historialPrestamos.clear();
     _nombreTrabajador = res['nombre'] ?? '';
     final cedula = (res['cedula'] ?? '').toString();
     if (cedula.isNotEmpty) {
@@ -594,7 +595,10 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
     final cedula = _cedulaCtrl.text.trim();
     if (cedula.isEmpty) return;
 
-    setState(() => _cargando = true);
+    setState(() {
+      _cargando = true;
+      _historialPrestamos.clear();
+    });
 
     try {
       final res = await ApiService.buscarTrabajadorCompleto(cedula);
