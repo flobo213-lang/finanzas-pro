@@ -995,7 +995,16 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
           : "Caja Efectivo Bs",
       "tasaUSD": tasaUsada,
       "fechaEgreso": fechaEgreso,
-      "notaLegal": _textoLegal()
+      "notaLegal": _textoLegal(),
+      "detSemana": _detalleSemana,
+      "detPrestaciones": _detallePrestaciones,
+      "detVacaciones": _detalleVacaciones,
+      "detUtilidades": _detalleUtilidades,
+      "detAyudaFamiliar": _detalleAyudaFamiliar,
+      "detBonoAlimenticio": _detalleBonoAlimenticio,
+      "detComision": _detalleComision,
+      "antiguedad": "$_anosTrabajados años, $_mesesTrabajados meses, $_diasTrabajados días",
+      "notaLegalBono": _notaLegalBonoAlimenticio(),
     };
 
     final res = await ApiService.registrarAccionConRespuesta(
