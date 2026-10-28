@@ -1109,6 +1109,18 @@ function registrarOperacion(payload) {
     tasaUSD, tasaUSDT, categoria, parteDelCierre, origenFondos
   ]);
 
+  // === MARCAR PENDIENTE COMO PAGADO SI SE PROPORCIONÓ ID DE PENDIENTE ===
+  if (payload.idPendiente && payload.idPendiente.toString().trim() !== "") {
+    try {
+      marcarPendientePagado({
+        id: payload.idPendiente.toString().trim(),
+        idTxPago: idTx
+      });
+    } catch (ePend) {
+      Logger.log("Error marcando pendiente pagado: " + ePend);
+    }
+  }
+
   // === SI ES PRÉSTAMO A TRABAJADOR: ACTUALIZAR DEUDA ===
   if (categoria === "PRESTAMO_TRABAJADOR" && payload.cedula) {
     try {
@@ -1554,7 +1566,13 @@ function registrarIngreso(payload) {
 function registrarPendiente(payload) {
   var ss = obtenerSpreadsheet();
   var sheet = ss.getSheetByName("CUENTAS_PENDIENTES");
-  if (!sheet) return { status: "ERROR", mensaje: "No existe CUENTAS_PENDIENTES" };
+  if (!sheet) {
+    sheet = ss.insertSheet("CUENTAS_PENDIENTES");
+    sheet.appendRow([
+      "ID", "Fecha", "Vencimiento", "Tipo", "Tercero",
+      "Concepto", "Monto", "Moneda", "Estado", "Fecha Pago", "ID Tx Pago", "Nota"
+    ]);
+  }
 
   var tipo = (payload.tipo || "POR_PAGAR").toString().toUpperCase();
   var tercero = (payload.tercero || "").toString().trim();

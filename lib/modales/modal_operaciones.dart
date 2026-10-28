@@ -175,10 +175,8 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
 
   // --- NUEVA FUNCION PARA CARGAR FACTURAS ---
   Future<void> _cargarFacturasPendientes() async {
-    if (_facturasPendientes.isNotEmpty) return;
     try {
-      final res = await ApiService.registrarAccionConRespuesta(
-          "obtenerPendientesPorPagar", {});
+      final res = await ApiService.obtenerPendientesPorPagar();
       if (!mounted) return;
       setState(() {
         _facturasPendientes = List.from(res['pendientes'] ?? []);
@@ -1013,8 +1011,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       if (_categoriaEgreso == "PRESTAMO_TRABAJADOR" &&
           _cedulaPrestamoEgresoCtrl.text.trim().isNotEmpty)
         "cedula": _cedulaPrestamoEgresoCtrl.text.trim(),
-      if (_categoriaEgreso == "Pago a Proveedores" &&
-          _idPendienteSeleccionado != null)
+      if (_vincularPendiente && _idPendienteSeleccionado != null)
         "idPendiente": _idPendienteSeleccionado, // <--- VINCULACION PENDIENTE
       "cuentaSalida": desglose.isNotEmpty ? desglose[0]['cuenta'] : "VARIAS",
       "moneda": "BS",
@@ -1676,66 +1673,74 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
                 ),
               ),
 
-              // --- NUEVO BLOQUE DE PENDIENTES ---
-              if (_categoriaEgreso == "Pago a Proveedores") ...[
-                const SizedBox(height: 6),
-                SwitchListTile(
-                  title: const Text("¿Vincular a factura pendiente?",
-                      style:
-                          TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                  value: _vincularPendiente,
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  activeColor: const Color(0xFF0F52BA),
-                  onChanged: (v) {
-                    setState(() {
-                      _vincularPendiente = v;
-                      if (v)
-                        _cargarFacturasPendientes();
-                      else {
-                        _idPendienteSeleccionado = null;
-                        _montoEgresoCtrl.clear();
-                        _conceptoEgresoCtrl.clear();
-                      }
-                    });
-                  },
-                ),
-                if (_vincularPendiente) ...[
-                  const SizedBox(height: 4),
-                  SizedBox(
-                    height: 36,
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _idPendienteSeleccionado,
-                      isExpanded: true,
-                      style:
-                          const TextStyle(fontSize: 11, color: Colors.black87),
-                      decoration:
-                          _inputDec(hint: "Seleccione factura pendiente"),
-                      items: _facturasPendientes.map((f) {
-                        return DropdownMenuItem<String>(
-                          value: f['id'].toString(),
-                          child: Text(
-                              "${f['tercero']} - ${_fmt.format(f['monto'])} ${f['moneda']}",
-                              style: const TextStyle(fontSize: 11)),
-                        );
-                      }).toList(),
-                      onChanged: (v) {
-                        setState(() {
-                          _idPendienteSeleccionado = v;
-                          final f = _facturasPendientes
-                              .firstWhere((x) => x['id'].toString() == v);
-                          if (f != null) {
-                            _conceptoEgresoCtrl.text =
-                                "${f['concepto']} (${f['tercero']})";
-                            _montoEgresoCtrl.text = (f['monto'] as num)
-                                .toDouble()
-                                .toStringAsFixed(2);
+              // --- BLOQUE DE VINCULACIÓN A PENDIENTES ---
+              const SizedBox(height: 6),
+              SwitchListTile(
+                title: const Text("Vincular a Pendiente",
+                    style:
+                        TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                value: _vincularPendiente,
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                activeColor: const Color(0xFF0F52BA),
+                onChanged: (v) {
+                  setState(() {
+                    _vincularPendiente = v;
+                    if (v) {
+                      _cargarFacturasPendientes();
+                    } else {
+                      _idPendienteSeleccionado = null;
+                      _montoEgresoCtrl.clear();
+                      _conceptoEgresoCtrl.clear();
+                    }
+                  });
+                },
+              ),
+              if (_vincularPendiente) ...[
+                const SizedBox(height: 4),
+                SizedBox(
+                  height: 36,
+                  child: DropdownButtonFormField<String>(
+                    value: _idPendienteSeleccionado,
+                    isExpanded: true,
+                    style:
+                        const TextStyle(fontSize: 11, color: Colors.black87),
+                    decoration:
+                        _inputDec(hint: "Seleccione cuenta pendiente"),
+                    items: _facturasPendientes.map((f) {
+                      final tercero = f['tercero']?.toString() ?? '';
+                      final concepto = f['concepto']?.toString() ?? '';
+                      final desc = concepto.isNotEmpty ? "$tercero - $concepto" : tercero;
+                      return DropdownMenuItem<String>(
+                        value: f['id'].toString(),
+                        child: Text(
+                            "$desc (${_fmt.format(f['monto'])} ${f['moneda']})",
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11)),
+                      );
+                    }).toList(),
+                    onChanged: (v) {
+                      setState(() {
+                        _idPendienteSeleccionado = v;
+                        final f = _facturasPendientes
+                            .firstWhere((x) => x['id'].toString() == v, orElse: () => null);
+                        if (f != null) {
+                          final tercero = f['tercero']?.toString() ?? '';
+                          final concepto = f['concepto']?.toString() ?? '';
+                          _conceptoEgresoCtrl.text = concepto.isNotEmpty
+                              ? "$tercero - $concepto"
+                              : tercero;
+                          _montoEgresoCtrl.text = (f['monto'] as num)
+                              .toDouble()
+                              .toStringAsFixed(2);
+                          if (f['moneda'] != null && f['moneda'].toString().isNotEmpty) {
+                            _monedaCalcEgreso = f['moneda'].toString().toUpperCase();
                           }
-                        });
-                      },
-                    ),
+                        }
+                      });
+                    },
                   ),
-                ],
+                ),
               ],
               // ------------------------------------
 

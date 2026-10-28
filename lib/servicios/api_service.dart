@@ -417,6 +417,24 @@ static Future<Map<String, dynamic>> buscarTrabajadorCompleto(String cedula) asyn
     return {"status": "ERROR", "pendientes": [], "totalPorPagar": 0.0};
   }
 
+  static Future<Map<String, dynamic>> obtenerPendientesPorPagar() async {
+    try {
+      final url = "$urlAppScript?action=obtenerPendientesPorPagar";
+      final response = await http
+          .get(Uri.parse(url), headers: _headersCORS)
+          .timeout(const Duration(seconds: 120));
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          return decoded;
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) print("Error obtenerPendientesPorPagar: $e");
+    }
+    return {"status": "ERROR", "pendientes": []};
+  }
+
   static Future<Map<String, dynamic>> registrarPendiente(
       Map<String, dynamic> payload) async {
     return await _postConManejoRedirect("registrarPendiente", payload);
