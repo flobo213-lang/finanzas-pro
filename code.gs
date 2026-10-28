@@ -96,7 +96,8 @@ function manejarPeticionApi(action, payload) {
       action === "obtenerDetalleCierre" ||
       action === "obtenerHistorialPrestamos" ||
       action === "obtenerDetallePorCategoria" ||
-      action === "obtenerConciliacionPorCuenta") {
+      action === "obtenerConciliacionPorCuenta" ||
+      action === "obtenerDetalleRecibo") {
     var resG = { status: "ERROR", mensaje: "Acción: " + action };
     try {
       if (action === "obtenerTasas") resG = obtenerTasasConfig();
@@ -117,6 +118,7 @@ function manejarPeticionApi(action, payload) {
       else if (action === "obtenerCierresDelRango") resG = obtenerCierresDelRango(payload);
       else if (action === "obtenerDetalleCierre") resG = obtenerDetalleCierre(payload);
       else if (action === "obtenerHistorialPrestamos") resG = obtenerHistorialPrestamos(payload);
+      else if (action === "obtenerDetalleRecibo") resG = obtenerDetalleRecibo(payload);
     } catch (err) {
       return responderJSON({ status: "ERROR", mensaje: "Excepción GET: " + err.toString() });
     }
@@ -3707,5 +3709,85 @@ function obtenerPendientesPorPagar() {
       }
     }
   }
+
+  // Guardar detalle de recibo en RECIBOS_DETALLE
+  try {
+    var sheetRecibos = ss.getSheetByName("RECIBOS_DETALLE");
+    if (!sheetRecibos) {
+      sheetRecibos = ss.insertSheet("RECIBOS_DETALLE");
+      sheetRecibos.appendRow(["ID_TX", "FECHA", "CEDULA", "TIPO", "DETALLE_JSON"]);
+    }
+    var reciboData = {
+      idTx: idTx,
+      tipo: tipoOperacion,
+      nombre: nombre,
+      cedula: cedula,
+      cuenta: fuentes.map(function(f) { return f.cuenta + ": " + f.monto; }).join(" | "),
+      detSemana: limpiarNumero(payload.detSemana || 0),
+      detPrestaciones: limpiarNumero(payload.detPrestaciones || 0),
+      detVacaciones: limpiarNumero(payload.detVacaciones || 0),
+      detUtilidades: limpiarNumero(payload.detUtilidades || 0),
+      detAyudaFamiliar: limpiarNumero(payload.detAyudaFamiliar || 0),
+      detBonoAlimenticio: limpiarNumero(payload.detBonoAlimenticio || 0),
+      detComision: limpiarNumero(payload.detComision || 0),
+      totalSalarial: limpiarNumero(payload.totalSalarial || 0),
+      totalNoSalarial: limpiarNumero(payload.totalNoSalarial || 0),
+      montoBrutoUSD: limpiarNumero(payload.montoBruto || 0),
+      descuentoDeuda: descuentoDeudaUSD,
+      deudaAnterior: limpiarNumero(payload.deudaAnterior || 0),
+      montoUSD: limpiarNumero(payload.montoTotal || 0),
+      montoBs: netoFinalBs,
+      tasa: tasaUSD,
+      nuevoSaldoDeuda: nuevaDeuda,
+      fecha: Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd HH:mm:ss"),
+      antiguedad: payload.antiguedad || "",
+      fechaEgreso: payload.fechaEgreso || "",
+      textoLegal: payload.notaLegal || (esLiquidacion ? "HE RECIBIDO A MI ENTERA SATISFACCION EL PAGO DE MI LIQUIDACIÓN" : "HE RECIBIDO A MI ENTERA SATISFACCION POR MI SEMANA DE TRABAJO"),
+      notaLegalBono: payload.notaLegalBono || null,
+      adicionales: payload.adicionales || []
+    };
+
+    sheetRecibos.appendRow([
+      idTx,
+      reciboData.fecha,
+      cedula,
+      esLiquidacion ? "LIQUIDACION_FINAL" : "PAGO_NOMINA",
+      JSON.stringify(reciboData)
+    ]);
+  } catch (errRecibo) {
+    Logger.log("Error guardando recibo detalle: " + errRecibo.toString());
+  }
+
   return { status: "SUCCESS", exito: true, idTx: idTx, mensaje: "Pago registrado correctamente" };
+}
+
+function obtenerDetalleRecibo(payload) {
+  var idTx = "";
+  if (payload) {
+    idTx = (payload.idTx || payload.id || "").toString().trim().toUpperCase();
+  }
+  if (idTx === "") return { status: "ERROR", mensaje: "Falta idTx" };
+
+  var ss = obtenerSpreadsheet();
+  var sheet = ss.getSheetByName("RECIBOS_DETALLE");
+  if (!sheet) return { status: "ERROR", mensaje: "No existe la hoja RECIBOS_DETALLE" };
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { status: "ERROR", mensaje: "No hay recibos guardados" };
+
+  var data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
+  for (var i = 0; i < data.length; i++) {
+    var idFila = data[i][0] ? data[i][0].toString().trim().toUpperCase() : "";
+    if (idFila === idTx) {
+      try {
+        var jsonStr = data[i][4] ? data[i][4].toString() : "{}";
+        var detalle = JSON.parse(jsonStr);
+        return { status: "SUCCESS", exito: true, recibo: detalle };
+      } catch (e) {
+        return { status: "ERROR", mensaje: "Error al parsear el JSON del recibo: " + e.toString() };
+      }
+    }
+  }
+
+  return { status: "ERROR", mensaje: "Recibo no encontrado para el idTx: " + idTx };
 }

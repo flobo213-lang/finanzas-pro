@@ -82,6 +82,7 @@ function manejarPeticionApi(action, payload) {
   if (action === "obtenerTasas" || 
       action === "obtenerSaldos" || 
       action === "obtenerCuentas" ||
+      action === "obtenerMaestroCuentas" ||
       action === "obtenerTasasHistorico"||
       action === "verificarEstadoDelDia"||
       action === "buscarTrabajador" ||
@@ -95,12 +96,14 @@ function manejarPeticionApi(action, payload) {
       action === "obtenerDetalleCierre" ||
       action === "obtenerHistorialPrestamos" ||
       action === "obtenerDetallePorCategoria" ||
-      action === "obtenerConciliacionPorCuenta") {
+      action === "obtenerConciliacionPorCuenta" ||
+      action === "obtenerDetalleRecibo") {
     var resG = { status: "ERROR", mensaje: "Acción: " + action };
     try {
       if (action === "obtenerTasas") resG = obtenerTasasConfig();
       else if (action === "obtenerSaldos") resG = obtenerSaldosActuales();
       else if (action === "obtenerCuentas") resG = obtenerCuentas();
+      else if (action === "obtenerMaestroCuentas") resG = obtenerMaestroCuentas();
       else if (action === "obtenerTasasHistorico") resG = obtenerTasasHistorico();
       else if (action === "verificarEstadoDelDia") resG = verificarEstadoDelDia();
       else if (action === "buscarTrabajador") resG = buscarTrabajadorCompleto(payload);
@@ -115,6 +118,7 @@ function manejarPeticionApi(action, payload) {
       else if (action === "obtenerCierresDelRango") resG = obtenerCierresDelRango(payload);
       else if (action === "obtenerDetalleCierre") resG = obtenerDetalleCierre(payload);
       else if (action === "obtenerHistorialPrestamos") resG = obtenerHistorialPrestamos(payload);
+      else if (action === "obtenerDetalleRecibo") resG = obtenerDetalleRecibo(payload);
     } catch (err) {
       return responderJSON({ status: "ERROR", mensaje: "Excepción GET: " + err.toString() });
     }
@@ -133,6 +137,7 @@ function manejarPeticionApi(action, payload) {
     else if (action === "registrarCierreJornada") res = registrarCierreJornada(payload);
     else if (action === "obtenerIngresosDeclaradosDelDia") res = obtenerIngresosDeclaradosDelDia(payload);
     else if (action === "procesarOperacionTrabajador") res = procesarOperacionTrabajador(payload);
+    else if (action === "registrarTransaccion") res = registrarTransaccion(payload);
     else if (action === "registrarOperacion") res = registrarOperacion(payload);
     else if (action === "registrarIngreso") res = registrarIngreso(payload);
     else if (action === "registrarFaltante") res = registrarFaltante(payload);
@@ -229,6 +234,32 @@ function obtenerCuentas() {
   for (var i = 0; i < data.length; i++) {
     var nombre = data[i][0] ? data[i][0].toString().trim() : "";
     if (nombre !== "") cuentas.push(nombre);
+  }
+  return { status: "SUCCESS", cuentas: cuentas };
+}
+
+function obtenerMaestroCuentas() {
+  var ss = obtenerSpreadsheet();
+  var sheet = ss.getSheetByName("MAESTRO_CUENTAS");
+  if (!sheet) {
+    sheet = ss.insertSheet("MAESTRO_CUENTAS");
+    sheet.appendRow(["Nombre", "Moneda", "Afecta_Cierre"]);
+  }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return { status: "SUCCESS", cuentas: [] };
+  }
+  var data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+  var cuentas = [];
+  for (var i = 0; i < data.length; i++) {
+    var nombre = data[i][0] ? data[i][0].toString().trim() : "";
+    if (nombre !== "") {
+      cuentas.push({
+        nombre: nombre,
+        moneda: data[i][1] ? data[i][1].toString().trim().toUpperCase() : "BS",
+        afectaCierre: data[i][2] === true || (data[i][2] && data[i][2].toString().toUpperCase() === "SI") || data[i][2] === "S"
+      });
+    }
   }
   return { status: "SUCCESS", cuentas: cuentas };
 }
@@ -480,7 +511,7 @@ function obtenerConsultasConFecha(params) {
         };
         movimientos.push(mov);
 
-        if (tipo.indexOf("EGRESO") !== -1 || tipo.indexOf("GASTO") !== -1 || tipo.indexOf("CARGO") !== -1) {
+        if ((tipo.indexOf("EGRESO") !== -1 || tipo.indexOf("GASTO") !== -1 || tipo.indexOf("CARGO") !== -1) && categoria !== "PRESTAMO_TRABAJADOR" && categoria !== "PRESTAMO" && tipo !== "PRESTAMO") {
           totalEgresos += monto; gastos.push(mov);
         } else if (tipo.indexOf("NOMINA") !== -1 || tipo.indexOf("PAGO_NOMINA") !== -1 || tipo.indexOf("LIQUIDACION") !== -1) {
           totalNomina += monto; gastos.push(mov);
@@ -724,27 +755,36 @@ var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyy
   sheetHistorial.getRange(targetRow, 1, filasHistorial.length, filasHistorial[0].length).setValues(filasHistorial);
 
   var fechaHoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
-  var descuadreBs = limpiarNumero(payload.descuadreBs || 0);
+
+  var ventaTotal = limpiarNumero(payload.ventaTotal !== undefined ? payload.ventaTotal : (payload.ventaEsperadaBs || payload.ventaTotalBs || 0));
+  var distribuido = limpiarNumero(payload.distribuido !== undefined ? payload.distribuido : totalNeto);
+  var comisiones = limpiarNumero(payload.comisiones !== undefined ? payload.comisiones : totalComisiones);
+  var gastos = limpiarNumero(payload.gastos || 0);
+  var prestamos = limpiarNumero(payload.prestamos || 0);
+
+  var diferencia = ventaTotal - distribuido - comisiones - gastos - prestamos;
+  var descuadreBs = payload.descuadreBs !== undefined ? limpiarNumero(payload.descuadreBs) : diferencia;
+  var estadoCierre = diferencia < 0 ? "FALTANTE" : "CERRADO";
 
   if (sheetCierres) {
     var totalCobradoUSD = tasaUSD > 0 ? (totalEquivalenteBs / tasaUSD) : 0;
     sheetCierres.appendRow([
       idCierre, fechaCierre,
       limpiarNumero(payload.montoVentaUSD || payload.ventaTotalUsd || 0),
-      limpiarNumero(payload.ventaEsperadaBs || 0),
+      ventaTotal,
       limpiarNumero(payload.ventaUSDT || 0),
       totalEquivalenteBs,
       totalCobradoUSD,
       descuadreBs,
-      "CERRADO",
+      estadoCierre,
       (payload.observacion || "") + marcaIdemp,
       tasaUSD, tasaUSDT
     ]);
   }
 
   // ===== FALTANTE / SOBRANTE AUTOMÁTICO =====
-  if (Math.abs(descuadreBs) > 0.01) {
-    var esFaltante = descuadreBs > 0; // descuadre positivo = falta distribuir
+  if (Math.abs(descuadreBs) > 0.01 || diferencia < 0) {
+    var esFaltante = descuadreBs < 0 || diferencia < 0;
     var categoriaAuto = esFaltante ? "FALTANTE" : "AJUSTE";
     var tipoAuto = esFaltante ? "EGRESO" : "INGRESO";
     var montoAuto = Math.abs(descuadreBs);
@@ -1767,8 +1807,8 @@ function obtenerResumenGerencial(params) {
       // Egresos
       if (tipo.indexOf("NOMINA") !== -1 || tipo.indexOf("LIQUIDACION") !== -1) {
         egresosDia += montoNeto;
-      } else if (tipo.indexOf("TRASPASO") !== -1 || tipo.indexOf("COMPRA_DIVISA") !== -1) {
-        // Traspasos y compra divisa no son egresos reales
+      } else if (tipo.indexOf("TRASPASO") !== -1 || tipo.indexOf("COMPRA_DIVISA") !== -1 || tipo.indexOf("PRESTAMO") !== -1 || categoria === "PRESTAMO_TRABAJADOR" || categoria === "PRESTAMO") {
+        // Préstamos, Traspasos y compra divisa no son egresos reales
       } else {
         egresosDia += montoNeto;
       }
@@ -1855,7 +1895,7 @@ function obtenerResumenGerencial(params) {
 }
 function onOpen() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var hojas = ["SALDOS", "HISTORIAL", "HISTORIAL_CIERRES", "NOMINA_PERSONAL", "CONFIG", "TASAS_HISTORICO", "DIFERENCIAS_CAMBIARIAS"];
+  var hojas = ["SALDOS", "HISTORIAL", "HISTORIAL_CIERRES", "NOMINA_PERSONAL", "CONFIG", "TASAS_HISTORICO", "DIFERENCIAS_CAMBIARIAS", "MAESTRO_CUENTAS"];
   hojas.forEach(function(nombre) {
     var sheet = ss.getSheetByName(nombre);
     if (!sheet) return;
@@ -1982,135 +2022,175 @@ function obtenerIngresosDeclaradosDelDia(payload) {
     cantidad: items.length
   };
 }// ============================================================================
-// PRÉSTAMO A TRABAJADOR — resta de cuenta + suma deuda en NOMINA_PERSONAL
+// REGISTRAR TRANSACCIÓN CENTRALIZADA
 // ============================================================================
-function registrarPrestamoTrabajador(payload) {
+function registrarTransaccion(payload) {
   var ss = obtenerSpreadsheet();
   var sheetHistorial = ss.getSheetByName("HISTORIAL");
   var sheetSaldos = ss.getSheetByName("SALDOS");
-  var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL") ||
-                  ss.getSheetByName("TRABAJADORES") ||
-                  ss.getSheetByName("PERSONAL");
+  if (!sheetHistorial || !sheetSaldos) {
+    return { status: "ERROR", mensaje: "Faltan hojas requeridas (HISTORIAL o SALDOS)" };
+  }
 
-  if (!sheetHistorial) return { status: "ERROR", mensaje: "Falta HISTORIAL" };
-  if (!sheetSaldos) return { status: "ERROR", mensaje: "Falta SALDOS" };
-  if (!sheetTrab) return { status: "ERROR", mensaje: "Falta NOMINA_PERSONAL" };
+  var origen = (payload.origen || payload.cuentaOrigen || payload.cuentaSalida || "Caja Efectivo Bs").toString().trim();
+  var destino = (payload.destino || payload.cuentaDestino || "VARIAS").toString().trim();
+  var monto = limpiarNumero(payload.monto !== undefined ? payload.monto : (payload.montoBs || payload.montoBsPagado || 0));
+  var moneda = (payload.moneda || "BS").toString().toUpperCase();
+  var tasa = limpiarNumero(payload.tasa !== undefined ? payload.tasa : (payload.tasaUSD || payload.tasaBCV || 0));
+  var tipoMovimiento = (payload.tipo_movimiento || payload.tipoMovimiento || payload.tipoOperacion || "GASTO").toString().toUpperCase().trim();
 
-  // Idempotencia
-  var idempotenciaKey = payload.idempotenciaKey || "";
+  var comision = limpiarNumero(payload.comision !== undefined ? payload.comision : (payload.comisionBs || 0));
+  var concepto = (payload.concepto || "").toString().trim();
+  var categoria = (payload.categoria || "").toString().trim();
+  var idempotenciaKey = (payload.idempotenciaKey || "").toString().trim();
+  var origenFondos = (payload.origenFondos || "ACUMULADO").toString().toUpperCase();
+
+  if (monto <= 0) return { status: "ERROR", mensaje: "Monto inválido." };
+
   if (idempotenciaKey !== "") {
     var histCheck = sheetHistorial.getDataRange().getValues();
     var inicioBusqueda = histCheck.length > 100 ? histCheck.length - 100 : 1;
     for (var hi = inicioBusqueda; hi < histCheck.length; hi++) {
       var conceptoFila = histCheck[hi][9] ? histCheck[hi][9].toString() : "";
-      var sufijoKey = "IDEMP:" + idempotenciaKey;
-      if (conceptoFila.indexOf(sufijoKey) !== -1) {
+      if (conceptoFila.indexOf("IDEMP:" + idempotenciaKey) !== -1) {
         return {
           status: "SUCCESS", exito: true,
           idTx: histCheck[hi][0].toString(),
-          mensaje: "Préstamo ya registrado (idempotencia)",
+          mensaje: "Transacción ya registrada (idempotencia)",
           duplicado: true
         };
       }
     }
   }
 
-  var cedula = (payload.cedula || "").toString().trim();
-  var nombre = (payload.nombre || "").toString().trim();
-  var montoBs = limpiarNumero(payload.montoBs || 0);
-  var cuentaOrigen = (payload.cuentaOrigen || "Caja Efectivo Bs").toString().trim();
-  var concepto = (payload.concepto || "Préstamo a trabajador").toString().trim();
-  var tasaUSD = limpiarNumero(payload.tasaUSD || 0);
-  var fechaOperacion = (payload.fechaOperacion || "").toString().trim();
-  var comisionBs = limpiarNumero(payload.comisionBs || 0);
-  var metodoPago = (payload.metodoPago || "EFECTIVO").toString().trim();
-  var origenFondos = (payload.origenFondos || "ACUMULADO").toString().toUpperCase();
-  if (cedula === "") return { status: "ERROR", mensaje: "Cédula obligatoria." };
-  if (montoBs <= 0) return { status: "ERROR", mensaje: "Monto inválido." };
-  if (tasaUSD <= 0) return { status: "ERROR", mensaje: "Tasa BCV inválida." };
-
-  // Validar saldo
-  var totalRequerido = montoBs + comisionBs;
-  var saldoDisponible = obtenerSaldoCuenta(sheetSaldos, cuentaOrigen);
-  if (saldoDisponible < totalRequerido) {
-    return {
-      status: "ERROR",
-      mensaje: "Fondos insuficientes en " + cuentaOrigen +
-               ". Disponible: " + saldoDisponible.toFixed(2) +
-               " | Requerido: " + totalRequerido.toFixed(2)
-    };
-  }
-
-  // Convertir a USD
-  var montoUSD = montoBs / tasaUSD;
-
-  // Buscar trabajador
-  var data = sheetTrab.getDataRange().getValues();
-  var cedulaClean = cedula.replace(/[^0-9]/g, "");
-  var filaTrab = -1;
-  var deudaActual = 0.0;
-  var nombreReal = nombre;
-
-  for (var i = 1; i < data.length; i++) {
-    var cedulaFila = (data[i][2] || data[i][0] || "").toString().replace(/[^0-9]/g, "");
-    if (cedulaFila === cedulaClean && cedulaClean !== "") {
-      filaTrab = i + 1;
-      deudaActual = limpiarNumero(data[i][9] || 0);
-      if (nombreReal === "") nombreReal = data[i][1] ? data[i][1].toString() : "";
-      break;
-    }
-  }
-
-  if (filaTrab === -1) {
-    return { status: "ERROR", mensaje: "Trabajador no encontrado: " + cedula };
-  }
-
-  var nuevaDeuda = deudaActual + montoUSD;
-
-  // Fecha
   var fechaTx = new Date();
-  if (fechaOperacion !== "") {
+  if (payload.fechaOperacion && payload.fechaOperacion.toString().trim() !== "") {
     try {
-      var fp = new Date(fechaOperacion + "T12:00:00");
+      var fp = new Date(payload.fechaOperacion + "T12:00:00");
       if (!isNaN(fp.getTime())) fechaTx = fp;
     } catch (e) {}
   }
 
-  // Restar de SALDOS
-  actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaOrigen, totalRequerido, false);
-
-  // Registrar en HISTORIAL
   var idTx = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
-  var conceptoTx = "PRÉSTAMO A TRABAJADOR - " + nombreReal +
-                   " (V-" + cedula + ") | $" + montoUSD.toFixed(2) +
-                   " @ " + tasaUSD.toFixed(2);
-  if (comisionBs > 0) {
-    conceptoTx += " | Comisión " + metodoPago + ": " + comisionBs.toFixed(2);
+
+  if (tipoMovimiento === "PRESTAMO" || tipoMovimiento === "PRESTAMO_TRABAJADOR") {
+    var cedula = (payload.cedula || "").toString().trim();
+    if (cedula === "") return { status: "ERROR", mensaje: "Cédula obligatoria para préstamos." };
+    if (tasa <= 0) return { status: "ERROR", mensaje: "Tasa inválida para préstamo." };
+
+    var totalDebito = monto + comision;
+    var saldoDisponible = obtenerSaldoCuenta(sheetSaldos, origen);
+    if (saldoDisponible < totalDebito) {
+      return {
+        status: "ERROR",
+        mensaje: "Fondos insuficientes en " + origen + ". Disponible: " + saldoDisponible.toFixed(2)
+      };
+    }
+
+    var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL") ||
+                    ss.getSheetByName("TRABAJADORES") ||
+                    ss.getSheetByName("PERSONAL");
+    if (!sheetTrab) return { status: "ERROR", mensaje: "No existe hoja de Trabajadores." };
+
+    var cedulaClean = cedula.replace(/[^0-9]/g, "");
+    var dataT = sheetTrab.getDataRange().getValues();
+    var filaTrab = -1;
+    var deudaActual = 0.0;
+    var nombreTrab = (payload.nombre || "").toString().trim();
+
+    for (var i = 1; i < dataT.length; i++) {
+      var cedFila = (dataT[i][2] || dataT[i][0] || "").toString().replace(/[^0-9]/g, "");
+      if (cedFila === cedulaClean && cedulaClean !== "") {
+        filaTrab = i + 1;
+        deudaActual = limpiarNumero(dataT[i][9] || 0);
+        if (nombreTrab === "") nombreTrab = dataT[i][1] ? dataT[i][1].toString() : "";
+        break;
+      }
+    }
+
+    if (filaTrab === -1) {
+      return { status: "ERROR", mensaje: "Trabajador no encontrado con cédula: " + cedula };
+    }
+
+    var montoUSD = monto / tasa;
+    var nuevaDeuda = deudaActual + montoUSD;
+
+    actualizarSaldoEnHojaSaldos(sheetSaldos, origen, totalDebito, false);
+    sheetTrab.getRange(filaTrab, 10).setValue(nuevaDeuda);
+
+    var conceptoTx = concepto || ("PRÉSTAMO A TRABAJADOR - " + nombreTrab + " (V-" + cedula + ") | $" + montoUSD.toFixed(2) + " @ " + tasa.toFixed(2));
+    if (idempotenciaKey !== "") conceptoTx += " | IDEMP:" + idempotenciaKey;
+
+    sheetHistorial.appendRow([
+      idTx, fechaTx, "PRESTAMO", origen, destino !== "VARIAS" ? destino : "PERSONAL",
+      totalDebito, moneda, monto, comision,
+      conceptoTx,
+      tasa, 0, "PRESTAMO_TRABAJADOR", "S", origenFondos
+    ]);
+
+    return {
+      status: "SUCCESS", exito: true, idTx: idTx,
+      montoUSD: montoUSD, deudaAnterior: deudaActual, deudaNueva: nuevaDeuda,
+      mensaje: "Préstamo registrado correctamente. Deuda actualizada: $" + nuevaDeuda.toFixed(2)
+    };
+
+  } else if (tipoMovimiento === "GASTO" || tipoMovimiento === "EGRESO") {
+    var totalGasto = monto + comision;
+    var saldoDispGasto = obtenerSaldoCuenta(sheetSaldos, origen);
+    if (saldoDispGasto < totalGasto) {
+      return {
+        status: "ERROR",
+        mensaje: "Fondos insuficientes en " + origen + ". Disponible: " + saldoDispGasto.toFixed(2)
+      };
+    }
+
+    actualizarSaldoEnHojaSaldos(sheetSaldos, origen, totalGasto, false);
+
+    var conceptoGasto = concepto || categoria || "Gasto";
+    if (idempotenciaKey !== "") conceptoGasto += " | IDEMP:" + idempotenciaKey;
+
+    sheetHistorial.appendRow([
+      idTx, fechaTx, "EGRESO", origen, destino,
+      totalGasto, moneda, monto, comision,
+      conceptoGasto,
+      tasa, 0, categoria || "OPERATIVO", "N", origenFondos
+    ]);
+
+    return { status: "SUCCESS", exito: true, idTx: idTx, mensaje: "Gasto registrado correctamente" };
+
+  } else {
+    var conceptoOtros = concepto || tipoMovimiento;
+    if (idempotenciaKey !== "") conceptoOtros += " | IDEMP:" + idempotenciaKey;
+
+    if (tipoMovimiento === "INGRESO") {
+      actualizarSaldoEnHojaSaldos(sheetSaldos, destino !== "VARIAS" ? destino : origen, monto, true);
+      sheetHistorial.appendRow([
+        idTx, fechaTx, "INGRESO", origen, destino,
+        monto, moneda, monto, comision,
+        conceptoOtros,
+        tasa, 0, categoria || "VENTA", "S", origenFondos
+      ]);
+    } else {
+      actualizarSaldoEnHojaSaldos(sheetSaldos, origen, monto + comision, false);
+      sheetHistorial.appendRow([
+        idTx, fechaTx, tipoMovimiento, origen, destino,
+        monto + comision, moneda, monto, comision,
+        conceptoOtros,
+        tasa, 0, categoria || "GENERAL", "N", origenFondos
+      ]);
+    }
+
+    return { status: "SUCCESS", exito: true, idTx: idTx, mensaje: "Transacción registrada correctamente" };
   }
-  if (idempotenciaKey !== "") {
-    conceptoTx = conceptoTx + " | IDEMP:" + idempotenciaKey;
-  }
+}
 
-  sheetHistorial.appendRow([
-    idTx, fechaTx, "EGRESO", cuentaOrigen, "PERSONAL",
-    montoBs + comisionBs, "BS", montoBs, comisionBs,
-    conceptoTx,
-    tasaUSD, 0, "PRESTAMO_TRABAJADOR", "S", origenFondos
-  ]);
-
-  // Sumar deuda al trabajador
-  sheetTrab.getRange(filaTrab, 10).setValue(nuevaDeuda);
-
-  return {
-    status: "SUCCESS",
-    exito: true,
-    idTx: idTx,
-    montoUSD: montoUSD,
-    deudaAnterior: deudaActual,
-    deudaNueva: nuevaDeuda,
-    nombre: nombreReal,
-    mensaje: "Préstamo registrado. Deuda actualizada: $" + nuevaDeuda.toFixed(2)
-  };
+// ============================================================================
+// PRÉSTAMO A TRABAJADOR — resta de cuenta + suma deuda en NOMINA_PERSONAL
+// ============================================================================
+function registrarPrestamoTrabajador(payload) {
+  var p = payload || {};
+  p.tipo_movimiento = "PRESTAMO";
+  return registrarTransaccion(p);
 }
 // ============================================================================
 // MOVIMIENTOS DEL DÍA — para jalar al cierre
@@ -3629,5 +3709,85 @@ function obtenerPendientesPorPagar() {
       }
     }
   }
+
+  // Guardar detalle de recibo en RECIBOS_DETALLE
+  try {
+    var sheetRecibos = ss.getSheetByName("RECIBOS_DETALLE");
+    if (!sheetRecibos) {
+      sheetRecibos = ss.insertSheet("RECIBOS_DETALLE");
+      sheetRecibos.appendRow(["ID_TX", "FECHA", "CEDULA", "TIPO", "DETALLE_JSON"]);
+    }
+    var reciboData = {
+      idTx: idTx,
+      tipo: tipoOperacion,
+      nombre: nombre,
+      cedula: cedula,
+      cuenta: fuentes.map(function(f) { return f.cuenta + ": " + f.monto; }).join(" | "),
+      detSemana: limpiarNumero(payload.detSemana || 0),
+      detPrestaciones: limpiarNumero(payload.detPrestaciones || 0),
+      detVacaciones: limpiarNumero(payload.detVacaciones || 0),
+      detUtilidades: limpiarNumero(payload.detUtilidades || 0),
+      detAyudaFamiliar: limpiarNumero(payload.detAyudaFamiliar || 0),
+      detBonoAlimenticio: limpiarNumero(payload.detBonoAlimenticio || 0),
+      detComision: limpiarNumero(payload.detComision || 0),
+      totalSalarial: limpiarNumero(payload.totalSalarial || 0),
+      totalNoSalarial: limpiarNumero(payload.totalNoSalarial || 0),
+      montoBrutoUSD: limpiarNumero(payload.montoBruto || 0),
+      descuentoDeuda: descuentoDeudaUSD,
+      deudaAnterior: limpiarNumero(payload.deudaAnterior || 0),
+      montoUSD: limpiarNumero(payload.montoTotal || 0),
+      montoBs: netoFinalBs,
+      tasa: tasaUSD,
+      nuevoSaldoDeuda: nuevaDeuda,
+      fecha: Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd HH:mm:ss"),
+      antiguedad: payload.antiguedad || "",
+      fechaEgreso: payload.fechaEgreso || "",
+      textoLegal: payload.notaLegal || (esLiquidacion ? "HE RECIBIDO A MI ENTERA SATISFACCION EL PAGO DE MI LIQUIDACIÓN" : "HE RECIBIDO A MI ENTERA SATISFACCION POR MI SEMANA DE TRABAJO"),
+      notaLegalBono: payload.notaLegalBono || null,
+      adicionales: payload.adicionales || []
+    };
+
+    sheetRecibos.appendRow([
+      idTx,
+      reciboData.fecha,
+      cedula,
+      esLiquidacion ? "LIQUIDACION_FINAL" : "PAGO_NOMINA",
+      JSON.stringify(reciboData)
+    ]);
+  } catch (errRecibo) {
+    Logger.log("Error guardando recibo detalle: " + errRecibo.toString());
+  }
+
   return { status: "SUCCESS", exito: true, idTx: idTx, mensaje: "Pago registrado correctamente" };
+}
+
+function obtenerDetalleRecibo(payload) {
+  var idTx = "";
+  if (payload) {
+    idTx = (payload.idTx || payload.id || "").toString().trim().toUpperCase();
+  }
+  if (idTx === "") return { status: "ERROR", mensaje: "Falta idTx" };
+
+  var ss = obtenerSpreadsheet();
+  var sheet = ss.getSheetByName("RECIBOS_DETALLE");
+  if (!sheet) return { status: "ERROR", mensaje: "No existe la hoja RECIBOS_DETALLE" };
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { status: "ERROR", mensaje: "No hay recibos guardados" };
+
+  var data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
+  for (var i = 0; i < data.length; i++) {
+    var idFila = data[i][0] ? data[i][0].toString().trim().toUpperCase() : "";
+    if (idFila === idTx) {
+      try {
+        var jsonStr = data[i][4] ? data[i][4].toString() : "{}";
+        var detalle = JSON.parse(jsonStr);
+        return { status: "SUCCESS", exito: true, recibo: detalle };
+      } catch (e) {
+        return { status: "ERROR", mensaje: "Error al parsear el JSON del recibo: " + e.toString() };
+      }
+    }
+  }
+
+  return { status: "ERROR", mensaje: "Recibo no encontrado para el idTx: " + idTx };
 }
