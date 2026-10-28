@@ -367,6 +367,7 @@ function buscarTrabajadorCompleto(params) {
   
   var data = sheet.getDataRange().getValues();
   var cleanBusquedaNum = busqueda.replace(/[^0-9]/g, "");
+  var resultados = [];
   
   for (var i = 1; i < data.length; i++) {
     var row = data[i];
@@ -376,7 +377,7 @@ function buscarTrabajadorCompleto(params) {
     
     var coincide = false;
     if (cleanBusquedaNum !== "" && cleanCedulaFila === cleanBusquedaNum) coincide = true;
-    else if (nombreFila.indexOf(busqueda) !== -1) coincide = true;
+    else if (busqueda !== "" && nombreFila.indexOf(busqueda) !== -1) coincide = true;
     
     if (coincide) {
       var fechaIng = "2026-01-01";
@@ -388,7 +389,7 @@ function buscarTrabajadorCompleto(params) {
       if (row[12]) {
         try { adicionales = JSON.parse(row[12].toString()); if (!Array.isArray(adicionales)) adicionales = []; } catch (e) { adicionales = []; }
       }
-      return {
+      var itemTrabajador = {
         status: "SUCCESS", encontrado: true,
         nombre: row[1] ? row[1].toString() : "Sin Nombre",
         cedula: cedulaFila, 
@@ -403,8 +404,19 @@ function buscarTrabajadorCompleto(params) {
         fechaEgreso: row[11] ? row[11].toString().substring(0, 10) : "", 
         adicionales: adicionales
       };
+      resultados.push(itemTrabajador);
     }
   }
+
+  if (resultados.length > 0) {
+    var respuesta = {};
+    for (var k in resultados[0]) {
+      respuesta[k] = resultados[0][k];
+    }
+    respuesta.resultados = resultados;
+    return respuesta;
+  }
+
   return { status: "SUCCESS", encontrado: false, debug: "Trabajador no encontrado" };
 }
 
