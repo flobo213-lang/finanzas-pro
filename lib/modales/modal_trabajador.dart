@@ -456,10 +456,8 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
     }
     _sueldoBase = (res['sueldoBase'] as num?)?.toDouble() ?? 0.0;
     _ayudaFamiliar = (res['ayudaFamiliar'] as num?)?.toDouble() ?? 0.0;
-    _bonoAlimenticio =
-        (res['bonoAlimenticio'] as num?)?.toDouble() ?? 0.0;
-    _deudaPendiente =
-        _r2((res['deudaPendiente'] as num?)?.toDouble() ?? 0.0);
+    _bonoAlimenticio = (res['bonoAlimenticio'] as num?)?.toDouble() ?? 0.0;
+    _deudaPendiente = _r2((res['deudaPendiente'] as num?)?.toDouble() ?? 0.0);
     _fechaIngresoStr =
         res['fechaIngreso'] ?? DateTime.now().toString().substring(0, 10);
 
@@ -604,7 +602,6 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
       setState(() {
         _cargando = false;
         if (res['encontrado'] == true) {
-
           _encontrado = true;
           _nombreTrabajador = res['nombre'] ?? '';
           _cedulaReal =
@@ -631,13 +628,16 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
 
           _aplicarDescuentoDeuda = false;
           _monedaDescuento = "USD";
+
           if (_deudaPendiente > 0 && _deudaPendiente >= 5.0) {
             _descuentoDeudaCtrl.text = "5.00";
+          } else {
+            _descuentoDeudaCtrl.text = _deudaPendiente.toStringAsFixed(2);
+          } // ✅ ESTA ES LA LLAVE QUE FALTABA
 
           final resultados = res['resultados'];
           if (resultados is List && resultados.length > 1) {
             _mostrarSeleccionTrabajadores(resultados);
-
           } else {
             _seleccionarTrabajador(res);
           }
@@ -1083,7 +1083,8 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
       "detAyudaFamiliar": _detalleAyudaFamiliar,
       "detBonoAlimenticio": _detalleBonoAlimenticio,
       "detComision": _detalleComision,
-      "antiguedad": "$_anosTrabajados años, $_mesesTrabajados meses, $_diasTrabajados días",
+      "antiguedad":
+          "$_anosTrabajados años, $_mesesTrabajados meses, $_diasTrabajados días",
       "notaLegalBono": _notaLegalBonoAlimenticio(),
     };
 
