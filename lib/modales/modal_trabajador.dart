@@ -52,6 +52,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
   bool _encontrado = false;
   bool _trabajadorInactivo = false;
   String _nombreTrabajador = "";
+  String _cedulaReal = ""; // <--- AGREGA ESTA LÍNEA
   double _sueldoBase = 0.0;
   double _ayudaFamiliar = 0.0;
   double _bonoAlimenticio = 0.0;
@@ -420,7 +421,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
   }
 
   void _buscarTrabajador() async {
-    final cedula = _cedulaCtrl.text.trim();
+    final cedula = _cedulaCtrl.text.trim(); // ✅ CORRECTO
     if (cedula.isEmpty) return;
 
     setState(() => _cargando = true);
@@ -434,6 +435,8 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
         if (res['encontrado'] == true) {
           _encontrado = true;
           _nombreTrabajador = res['nombre'] ?? '';
+          _cedulaReal =
+              res['cedula']?.toString() ?? ''; // <--- AGREGA ESTA LÍNEA
           _sueldoBase = (res['sueldoBase'] as num?)?.toDouble() ?? 0.0;
           _ayudaFamiliar = (res['ayudaFamiliar'] as num?)?.toDouble() ?? 0.0;
           _bonoAlimenticio =
@@ -703,7 +706,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                 children: [
                   pw.Text("Deuda Anterior:",
                       style: const pw.TextStyle(fontSize: 8)),
-                  pw.Text("\$ ${datos['deudaAnterior'].toStringAsFixed(2)}",
+                  pw.Text("\$ ${_fmt.format(datos['deudaAnterior'])}",
                       style: const pw.TextStyle(fontSize: 8)),
                 ],
               ),
@@ -713,7 +716,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                   pw.Text("Abono a Deuda:",
                       style: const pw.TextStyle(
                           fontSize: 8, color: PdfColors.green800)),
-                  pw.Text("- \$ ${datos['descuentoDeuda'].toStringAsFixed(2)}",
+                  pw.Text("- \$ ${_fmt.format(datos['descuentoDeuda'])}",
                       style: const pw.TextStyle(
                           fontSize: 8, color: PdfColors.green800)),
                 ],
@@ -724,7 +727,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                   pw.Text("Nueva Deuda:",
                       style: const pw.TextStyle(
                           fontSize: 8, fontWeight: pw.FontWeight.bold)),
-                  pw.Text("\$ ${datos['nuevoSaldoDeuda'].toStringAsFixed(2)}",
+                  pw.Text("\$ ${_fmt.format(datos['nuevoSaldoDeuda'])}",
                       style: const pw.TextStyle(
                           fontSize: 8, fontWeight: pw.FontWeight.bold)),
                 ],
@@ -736,7 +739,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                 pw.Text("Total Neto:",
                     style: const pw.TextStyle(
                         fontWeight: pw.FontWeight.bold, fontSize: 9)),
-                pw.Text("\$ ${datos['montoUSD'].toStringAsFixed(2)}",
+                pw.Text("\$ ${_fmt.format(datos['montoUSD'])}",
                     style: const pw.TextStyle(
                         fontWeight: pw.FontWeight.bold, fontSize: 9)),
               ],
@@ -747,7 +750,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                 pw.Text("Pagado en Bs:",
                     style: const pw.TextStyle(
                         fontWeight: pw.FontWeight.bold, fontSize: 9)),
-                pw.Text("${datos['montoBs'].toStringAsFixed(2)} Bs",
+                pw.Text("${_fmt.format(datos['montoBs'])} Bs",
                     style: const pw.TextStyle(
                         fontWeight: pw.FontWeight.bold, fontSize: 9)),
               ],
@@ -756,7 +759,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text("Tasa:", style: const pw.TextStyle(fontSize: 7)),
-                pw.Text("${datos['tasa'].toStringAsFixed(2)} Bs/\$",
+                pw.Text("${_fmt.format(datos['tasa'])} Bs/\$",
                     style: const pw.TextStyle(fontSize: 7)),
               ],
             ),
@@ -791,6 +794,54 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
 
     await Printing.layoutPdf(
         onLayout: (PdfPageFormat format) async => doc.save());
+  }
+
+  void _soloImprimir() {
+    if (!_encontrado) return;
+
+    final tasaUsada = _tasaActual();
+    final descDeuda = _descDeudaUsd();
+    final nuevoSaldoDeuda = _r2(_mathMax(0.0, _deudaPendiente - descDeuda));
+    final montoBs = _totalFuentesBs();
+    final fechaEgreso = _tipoOperacion == "Liquidación / Finiquito"
+        ? DateFormat('yyyy-MM-dd').format(_fechaEgresoSeleccionada)
+        : "";
+
+    final datosRecibo = {
+      "tipo": _tipoOperacion,
+      "nombre": _nombreTrabajador,
+      "cedula": _cedulaReal,
+      "cuenta": _fuentesPago.isNotEmpty
+          ? _fuentesPago.map((f) => "${f['cuenta']}: ${f['monto']}").join(" | ")
+          : "VARIAS",
+      "detSemana": _detalleSemana,
+      "detPrestaciones": _detallePrestaciones,
+      "detVacaciones": _detalleVacaciones,
+      "detUtilidades": _detalleUtilidades,
+      "detAyudaFamiliar": _detalleAyudaFamiliar,
+      "detBonoAlimenticio": _detalleBonoAlimenticio,
+      "detComision": _detalleComision,
+      "totalSalarial": _totalSalarial,
+      "totalNoSalarial": _totalNoSalarial,
+      "montoBrutoUSD": _totalDivisasCalculado,
+      "descuentoDeuda": descDeuda,
+      "deudaAnterior": _deudaPendiente,
+      "montoUSD": _montoNetoDivisas,
+      "montoBs": montoBs,
+      "tasa": tasaUsada,
+      "nuevoSaldoDeuda": nuevoSaldoDeuda,
+      "fecha": DateTime.now()
+          .toString()
+          .substring(0, 19), // Aquí puedes cambiar la fecha si quieres
+      "antiguedad":
+          "$_anosTrabajados años, $_mesesTrabajados meses, $_diasTrabajados días",
+      "fechaEgreso": fechaEgreso,
+      "textoLegal": _textoLegal(),
+      "notaLegalBono": _notaLegalBonoAlimenticio(),
+      "adicionales": _adicionales,
+    };
+
+    _mostrarDialogoRecibo(context, datosRecibo);
   }
 
   void _procesarOperacion() async {
@@ -846,7 +897,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
 
     final payload = {
       "tipoOperacion": _tipoOperacion,
-      "cedula": _cedulaCtrl.text.trim(),
+      "cedula": _cedulaReal, // ✅ USA LA CÉDULA REAL
       "nombre": _nombreTrabajador,
       "adicionales": _adicionales
           .map((a) => {
@@ -884,7 +935,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
       final datosRecibo = {
         "tipo": _tipoOperacion,
         "nombre": _nombreTrabajador,
-        "cedula": _cedulaCtrl.text.trim(),
+        "cedula": _cedulaReal, // ✅ Para que el PDF salga con "V-19942151"
         "cuenta": _fuentesPago.isNotEmpty
             ? _fuentesPago
                 .map((f) => "${f['cuenta']}: ${f['monto']}")
