@@ -22,6 +22,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
       NumberFormat.currency(locale: 'es_VE', symbol: '', decimalDigits: 2);
 
   final TextEditingController _cedulaCtrl = TextEditingController();
+  final FocusNode _cedulaFocusNode = FocusNode();
   final TextEditingController _tasaEspecialCtrl = TextEditingController();
   final TextEditingController _montoCtrl = TextEditingController();
   final TextEditingController _descuentoDeudaCtrl =
@@ -108,11 +109,37 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
   @override
   void dispose() {
     _cedulaCtrl.dispose();
+    _cedulaFocusNode.dispose();
     _tasaEspecialCtrl.dispose();
     _montoCtrl.dispose();
     _descuentoDeudaCtrl.dispose();
     _montoFuenteTmpCtrl.dispose();
     super.dispose();
+  }
+
+  void _prepararSiguienteTrabajador() {
+    setState(() {
+      _cedulaCtrl.clear();
+      _encontrado = false;
+      _trabajadorInactivo = false;
+      _nombreTrabajador = "";
+      _sueldoBase = 0.0;
+      _ayudaFamiliar = 0.0;
+      _bonoAlimenticio = 0.0;
+      _deudaPendiente = 0.0;
+      _historialPrestamos.clear();
+      _adicionales.clear();
+      _totalAdicionalesUSD = 0.0;
+      _descuentoDeudaCtrl.text = "0.00";
+      _aplicarDescuentoDeuda = false;
+      _montoFuenteTmpCtrl.clear();
+      _montoCtrl.clear();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _cedulaFocusNode.requestFocus();
+      }
+    });
   }
 
   // ─────────────────────────────────────────────
@@ -420,6 +447,150 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
     );
   }
 
+  void _seleccionarTrabajador(Map<String, dynamic> res) {
+    _encontrado = true;
+    _nombreTrabajador = res['nombre'] ?? '';
+    final cedula = (res['cedula'] ?? '').toString();
+    if (cedula.isNotEmpty) {
+      _cedulaCtrl.text = cedula;
+    }
+    _sueldoBase = (res['sueldoBase'] as num?)?.toDouble() ?? 0.0;
+    _ayudaFamiliar = (res['ayudaFamiliar'] as num?)?.toDouble() ?? 0.0;
+    _bonoAlimenticio =
+        (res['bonoAlimenticio'] as num?)?.toDouble() ?? 0.0;
+    _deudaPendiente =
+        _r2((res['deudaPendiente'] as num?)?.toDouble() ?? 0.0);
+    _fechaIngresoStr =
+        res['fechaIngreso'] ?? DateTime.now().toString().substring(0, 10);
+
+    final estadoStr = (res['estado'] ?? '').toString().toUpperCase();
+    _trabajadorInactivo = estadoStr == 'INACTIVO' ||
+        estadoStr == 'FINALIZADO' ||
+        estadoStr == 'EGRESADO';
+
+    final fe = (res['fechaEgreso'] ?? '').toString();
+    if (fe.isNotEmpty && fe.length >= 10) {
+      final parsed = DateTime.tryParse(fe);
+      if (parsed != null) _fechaEgresoSeleccionada = parsed;
+    }
+
+    _aplicarDescuentoDeuda = false;
+    _monedaDescuento = "USD";
+    if (_deudaPendiente > 0 && _deudaPendiente >= 5.0) {
+      _descuentoDeudaCtrl.text = "5.00";
+    } else {
+      _descuentoDeudaCtrl.text = _deudaPendiente.toStringAsFixed(2);
+    }
+
+    if (_trabajadorInactivo) {
+      _tipoOperacion = "Liquidación / Finiquito";
+    }
+
+    _adicionales.clear();
+    if (res['adicionales'] is List) {
+      int i = 0;
+      for (var ad in res['adicionales']) {
+        if (ad is Map) {
+          _adicionales.add({
+            "id": "adic_${DateTime.now().microsecondsSinceEpoch}_$i",
+            "categoria": ad['categoria']?.toString() ?? 'Otro',
+            "monto": _parseNum(ad['monto']?.toString() ?? '0'),
+          });
+          i++;
+        }
+      }
+    }
+    _recalcularAdicionales();
+    _cargarHistorialPrestamos(cedula);
+    _calcularValores();
+  }
+
+  void _mostrarSeleccionTrabajadores(List<dynamic> listaResultados) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      builder: (ctx) {
+        return Container(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    "Seleccione un trabajador (${listaResultados.length} encontrados)",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      color: Color(0xFF0F52BA),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => Navigator.pop(ctx),
+                  )
+                ],
+              ),
+              const Divider(height: 10),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: listaResultados.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (_, index) {
+                    final item = Map<String, dynamic>.from(
+                      listaResultados[index] as Map,
+                    );
+                    final nombre = item['nombre'] ?? 'Sin Nombre';
+                    final cedula = item['cedula'] ?? '';
+                    final cargo = item['cargo'] ?? '';
+
+                    return ListTile(
+                      dense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 0,
+                      ),
+                      title: Text(
+                        nombre,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                        ),
+                      ),
+                      subtitle: Text(
+                        "Cédula: $cedula${cargo.toString().isNotEmpty ? ' | Cargo: $cargo' : ''}",
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.blueGrey,
+                        ),
+                      ),
+                      trailing: const Icon(
+                        Icons.chevron_right,
+                        size: 16,
+                        color: Color(0xFF0F52BA),
+                      ),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        setState(() {
+                          _seleccionarTrabajador(item);
+                        });
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _buscarTrabajador() async {
     final cedula = _cedulaCtrl.text.trim(); // ✅ CORRECTO
     if (cedula.isEmpty) return;
@@ -433,6 +604,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
       setState(() {
         _cargando = false;
         if (res['encontrado'] == true) {
+
           _encontrado = true;
           _nombreTrabajador = res['nombre'] ?? '';
           _cedulaReal =
@@ -461,33 +633,14 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
           _monedaDescuento = "USD";
           if (_deudaPendiente > 0 && _deudaPendiente >= 5.0) {
             _descuentoDeudaCtrl.text = "5.00";
+
+          final resultados = res['resultados'];
+          if (resultados is List && resultados.length > 1) {
+            _mostrarSeleccionTrabajadores(resultados);
+
           } else {
-            _descuentoDeudaCtrl.text = _deudaPendiente.toStringAsFixed(2);
+            _seleccionarTrabajador(res);
           }
-
-          if (_trabajadorInactivo) {
-            _tipoOperacion = "Liquidación / Finiquito";
-          }
-
-          _fuentesPago.clear();
-
-          _adicionales.clear();
-          if (res['adicionales'] is List) {
-            int i = 0;
-            for (var ad in res['adicionales']) {
-              if (ad is Map) {
-                _adicionales.add({
-                  "id": "adic_${DateTime.now().microsecondsSinceEpoch}_$i",
-                  "categoria": ad['categoria']?.toString() ?? 'Otro',
-                  "monto": _parseNum(ad['monto']?.toString() ?? '0'),
-                });
-                i++;
-              }
-            }
-          }
-          _recalcularAdicionales();
-          _cargarHistorialPrestamos(cedula);
-          _calcularValores();
         } else {
           _encontrado = false;
           _trabajadorInactivo = false;
@@ -922,7 +1075,16 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
           : "Caja Efectivo Bs",
       "tasaUSD": tasaUsada,
       "fechaEgreso": fechaEgreso,
-      "notaLegal": _textoLegal()
+      "notaLegal": _textoLegal(),
+      "detSemana": _detalleSemana,
+      "detPrestaciones": _detallePrestaciones,
+      "detVacaciones": _detalleVacaciones,
+      "detUtilidades": _detalleUtilidades,
+      "detAyudaFamiliar": _detalleAyudaFamiliar,
+      "detBonoAlimenticio": _detalleBonoAlimenticio,
+      "detComision": _detalleComision,
+      "antiguedad": "$_anosTrabajados años, $_mesesTrabajados meses, $_diasTrabajados días",
+      "notaLegalBono": _notaLegalBonoAlimenticio(),
     };
 
     final res = await ApiService.registrarAccionConRespuesta(
@@ -1020,7 +1182,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                     InkWell(
                       onTap: () {
                         Navigator.pop(context);
-                        Navigator.pop(context, true);
+                        _prepararSiguienteTrabajador();
                       },
                       child: const Icon(Icons.close,
                           size: 16, color: Colors.white),
@@ -1136,6 +1298,9 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                                   fontSize: 10, fontWeight: FontWeight.bold)),
                           onPressed: () async {
                             await _imprimirRecibo(datos, true);
+                            if (!context.mounted) return;
+                            Navigator.pop(context);
+                            _prepararSiguienteTrabajador();
                           },
                         ),
                       ),
@@ -1157,7 +1322,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                             await _imprimirRecibo(datos, false);
                             if (!context.mounted) return;
                             Navigator.pop(context);
-                            Navigator.pop(context, true);
+                            _prepararSiguienteTrabajador();
                           },
                         ),
                       ),
@@ -1320,6 +1485,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                             height: 36,
                             child: TextField(
                               controller: _cedulaCtrl,
+                              focusNode: _cedulaFocusNode,
                               keyboardType: TextInputType.text,
                               style: const TextStyle(fontSize: 11),
                               textInputAction: TextInputAction.search,

@@ -787,6 +787,11 @@ class _ModalConsultasState extends State<ModalConsultas> {
                                 cuentaOrigen = origen;
                               }
 
+                              final esNominaOLiquidacion = tipo.contains('NOMINA') ||
+                                  tipo.contains('LIQUIDAC') ||
+                                  tipo.contains('PAGO_NOMINA');
+                              final idTx = m['idTx']?.toString() ?? '';
+
                               return Padding(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 8, vertical: 6),
@@ -840,6 +845,41 @@ class _ModalConsultasState extends State<ModalConsultas> {
                                         ],
                                       ),
                                     ),
+                                    if (esNominaOLiquidacion && idTx.isNotEmpty) ...[
+                                      InkWell(
+                                        onTap: () => _reimprimirRecibo(idTx),
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 6, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF0F52BA)
+                                                .withValues(alpha: 0.1),
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                            border: Border.all(
+                                                color: const Color(0xFF0F52BA)
+                                                    .withValues(alpha: 0.3)),
+                                          ),
+                                          child: const Row(
+                                            children: [
+                                              Icon(Icons.print,
+                                                  size: 11,
+                                                  color: Color(0xFF0F52BA)),
+                                              SizedBox(width: 3),
+                                              Text(
+                                                "Reimprimir",
+                                                style: TextStyle(
+                                                    fontSize: 8.5,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Color(0xFF0F52BA)),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                    ],
                                     Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.end,
@@ -1188,6 +1228,11 @@ class _ModalConsultasState extends State<ModalConsultas> {
           cuentaOrigen = origen;
         }
 
+        final esNominaOLiquidacion = tipo.contains('NOMINA') ||
+            tipo.contains('LIQUIDAC') ||
+            tipo.contains('PAGO_NOMINA');
+        final idTx = m['idTx']?.toString() ?? '';
+
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           child: Row(
@@ -1258,6 +1303,36 @@ class _ModalConsultasState extends State<ModalConsultas> {
                   ],
                 ),
               ),
+              if (esNominaOLiquidacion && idTx.isNotEmpty) ...[
+                InkWell(
+                  onTap: () => _reimprimirRecibo(idTx),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F52BA).withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                          color: const Color(0xFF0F52BA).withValues(alpha: 0.3)),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.print, size: 11, color: Color(0xFF0F52BA)),
+                        SizedBox(width: 3),
+                        Text(
+                          "Reimprimir Recibo",
+                          style: TextStyle(
+                              fontSize: 8.5,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF0F52BA)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 mainAxisSize: MainAxisSize.min,
@@ -2523,6 +2598,530 @@ class _ModalConsultasState extends State<ModalConsultas> {
   // ============================================================
   // HELPERS DE CONCEPTO
   // ============================================================
+  Widget _filaDesgloseRecibo(String label, double monto, Color color,
+      {bool negrita = false, bool grande = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1.5),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Flexible(
+            child: Text(label,
+                style: TextStyle(
+                    fontSize: grande ? 11 : 10,
+                    fontWeight: negrita ? FontWeight.bold : FontWeight.normal,
+                    color: color)),
+          ),
+          Text("${monto < 0 ? '-' : ''}\$ ${_fmt.format(monto.abs())}",
+              style: TextStyle(
+                  fontSize: grande ? 11 : 10,
+                  fontWeight: negrita ? FontWeight.bold : FontWeight.normal,
+                  color: color)),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _reimprimirRecibo(String idTx) async {
+    try {
+      final res = await ApiService.registrarAccionConRespuesta(
+        "obtenerDetalleRecibo",
+        {"idTx": idTx},
+      );
+      if (!mounted) return;
+      if (res['status'] == 'SUCCESS' && res['recibo'] != null) {
+        final Map<String, dynamic> datos =
+            Map<String, dynamic>.from(res['recibo'] as Map);
+        _mostrarDialogoRecibo(context, datos);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                res['mensaje'] ?? "No se encontró detalle para este recibo."),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Error al recuperar el recibo: $e"),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _imprimirReciboDocumento(
+      Map<String, dynamic> datos, bool esTicket) async {
+    final doc = pw.Document();
+    final pageFormat = esTicket ? PdfPageFormat.roll80 : PdfPageFormat.a4;
+    final notaLegal = datos['notaLegalBono'] as String?;
+
+    doc.addPage(pw.Page(
+      pageFormat: pageFormat,
+      build: (pw.Context context) {
+        return pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Center(
+                child: pw.Text("CONTROL Y GESTION",
+                    style: const pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold, fontSize: 12))),
+            pw.Center(
+                child: pw.Text(
+                    datos['tipo'] == "Liquidación / Finiquito"
+                        ? "COMPROBANTE DE LIQUIDACIÓN"
+                        : "COMPROBANTE DE PAGO",
+                    style: const pw.TextStyle(fontSize: 9))),
+            pw.SizedBox(height: 6),
+            pw.Text("Fecha: ${datos['fecha'] ?? ''}",
+                style: const pw.TextStyle(fontSize: 7)),
+            if (datos['adicionales'] != null &&
+                (datos['adicionales'] as List).isNotEmpty) ...[
+              pw.SizedBox(height: 3),
+              pw.Text("PAGOS ADICIONALES (NO SALARIAL):",
+                  style: const pw.TextStyle(
+                      fontWeight: pw.FontWeight.bold,
+                      fontSize: 8,
+                      color: PdfColors.teal700)),
+              pw.SizedBox(height: 2),
+              ...(datos['adicionales'] as List).map((ad) {
+                return pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text("  ${ad['categoria']}",
+                        style: const pw.TextStyle(fontSize: 8)),
+                    pw.Text("\$ ${((ad['monto'] ?? 0) as num).toStringAsFixed(2)}",
+                        style: const pw.TextStyle(fontSize: 8)),
+                  ],
+                );
+              }),
+              pw.Divider(thickness: 0.5),
+            ],
+            pw.Divider(thickness: 0.5),
+            pw.Text("Operación: ${datos['tipo'] ?? ''}",
+                style: const pw.TextStyle(
+                    fontWeight: pw.FontWeight.bold, fontSize: 9)),
+            pw.Text("Trabajador: ${datos['nombre'] ?? ''}",
+                style: const pw.TextStyle(fontSize: 8)),
+            pw.Text("Cédula: V-${datos['cedula'] ?? ''}",
+                style: const pw.TextStyle(fontSize: 8)),
+            if (datos['fechaEgreso'] != null &&
+                datos['fechaEgreso'].toString().isNotEmpty)
+              pw.Text("Fecha de Egreso: ${datos['fechaEgreso']}",
+                  style: const pw.TextStyle(fontSize: 8)),
+            pw.Divider(thickness: 0.5),
+            pw.Text("CONCEPTOS SALARIALES:",
+                style: const pw.TextStyle(
+                    fontWeight: pw.FontWeight.bold,
+                    fontSize: 8,
+                    color: PdfColors.blueGrey900)),
+            pw.SizedBox(height: 2),
+            if (((datos['detSemana'] ?? 0) as num) > 0)
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text("Sueldo Semanal:",
+                      style: const pw.TextStyle(fontSize: 8)),
+                  pw.Text("\$ ${((datos['detSemana'] ?? 0) as num).toStringAsFixed(2)}",
+                      style: const pw.TextStyle(fontSize: 8)),
+                ],
+              ),
+            if (((datos['detPrestaciones'] ?? 0) as num) > 0)
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text("Prestaciones:",
+                      style: const pw.TextStyle(fontSize: 8)),
+                  pw.Text("\$ ${((datos['detPrestaciones'] ?? 0) as num).toStringAsFixed(2)}",
+                      style: const pw.TextStyle(fontSize: 8)),
+                ],
+              ),
+            if (((datos['detVacaciones'] ?? 0) as num) > 0)
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text("Vacaciones + Bono:",
+                      style: const pw.TextStyle(fontSize: 8)),
+                  pw.Text("\$ ${((datos['detVacaciones'] ?? 0) as num).toStringAsFixed(2)}",
+                      style: const pw.TextStyle(fontSize: 8)),
+                ],
+              ),
+            if (((datos['detUtilidades'] ?? 0) as num) > 0)
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text("Utilidades:",
+                      style: const pw.TextStyle(fontSize: 8)),
+                  pw.Text("\$ ${((datos['detUtilidades'] ?? 0) as num).toStringAsFixed(2)}",
+                      style: const pw.TextStyle(fontSize: 8)),
+                ],
+              ),
+            pw.SizedBox(height: 3),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text("Subtotal Salarial:",
+                    style: const pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold, fontSize: 8)),
+                pw.Text("\$ ${((datos['totalSalarial'] ?? 0) as num).toStringAsFixed(2)}",
+                    style: const pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold, fontSize: 8)),
+              ],
+            ),
+            pw.Divider(thickness: 0.5),
+            if (((datos['totalNoSalarial'] ?? 0) as num) > 0) ...[
+              pw.Text("BENEFICIOS NO SALARIALES:",
+                  style: const pw.TextStyle(
+                      fontWeight: pw.FontWeight.bold,
+                      fontSize: 8,
+                      color: PdfColors.grey700)),
+              pw.SizedBox(height: 2),
+              if (((datos['detAyudaFamiliar'] ?? 0) as num) > 0) ...[
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text("Ayuda Familiar:",
+                        style: const pw.TextStyle(fontSize: 8)),
+                    pw.Text(
+                        "\$ ${((datos['detAyudaFamiliar'] ?? 0) as num).toStringAsFixed(2)}",
+                        style: const pw.TextStyle(fontSize: 8)),
+                  ],
+                ),
+                pw.Text("   G.O. Ext. N° 6.076 (07/05/2012) - Art. 104 LOTTT",
+                    style: const pw.TextStyle(
+                        fontSize: 6, color: PdfColors.grey700)),
+              ],
+              if (((datos['detBonoAlimenticio'] ?? 0) as num) > 0) ...[
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text("Bono Alimenticio:",
+                        style: const pw.TextStyle(fontSize: 8)),
+                    pw.Text(
+                        "\$ ${((datos['detBonoAlimenticio'] ?? 0) as num).toStringAsFixed(2)}",
+                        style: const pw.TextStyle(fontSize: 8)),
+                  ],
+                ),
+                pw.Text(
+                    "   G.O. N° 39.666 (04/05/2011) - Art. 5 Ley de Alimentación",
+                    style: const pw.TextStyle(
+                        fontSize: 6, color: PdfColors.grey700)),
+              ],
+              pw.SizedBox(height: 2),
+              pw.Text(
+                "Estos conceptos no forman parte del salario y no inciden en prestaciones, vacaciones, bono vacacional ni utilidades.",
+                style:
+                    const pw.TextStyle(fontSize: 6, color: PdfColors.grey700),
+              ),
+              pw.Divider(thickness: 0.5),
+            ],
+            pw.SizedBox(height: 2),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text("Total Bruto:",
+                    style: const pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold, fontSize: 8)),
+                pw.Text("\$ ${((datos['montoBrutoUSD'] ?? 0) as num).toStringAsFixed(2)}",
+                    style: const pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold, fontSize: 8)),
+              ],
+            ),
+            if (((datos['descuentoDeuda'] ?? 0) as num) > 0) ...[
+              pw.Divider(thickness: 0.5),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text("Deuda Anterior:",
+                      style: const pw.TextStyle(fontSize: 8)),
+                  pw.Text("\$ ${((datos['deudaAnterior'] ?? 0) as num).toStringAsFixed(2)}",
+                      style: const pw.TextStyle(fontSize: 8)),
+                ],
+              ),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text("Abono a Deuda:",
+                      style: const pw.TextStyle(
+                          fontSize: 8, color: PdfColors.green800)),
+                  pw.Text("- \$ ${((datos['descuentoDeuda'] ?? 0) as num).toStringAsFixed(2)}",
+                      style: const pw.TextStyle(
+                          fontSize: 8, color: PdfColors.green800)),
+                ],
+              ),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text("Nueva Deuda:",
+                      style: const pw.TextStyle(
+                          fontSize: 8, fontWeight: pw.FontWeight.bold)),
+                  pw.Text("\$ ${((datos['nuevoSaldoDeuda'] ?? 0) as num).toStringAsFixed(2)}",
+                      style: const pw.TextStyle(
+                          fontSize: 8, fontWeight: pw.FontWeight.bold)),
+                ],
+              ),
+            ],
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text("Total Neto:",
+                    style: const pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold, fontSize: 9)),
+                pw.Text("\$ ${((datos['montoUSD'] ?? 0) as num).toStringAsFixed(2)}",
+                    style: const pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold, fontSize: 9)),
+              ],
+            ),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text("Pagado en Bs:",
+                    style: const pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold, fontSize: 9)),
+                pw.Text("${((datos['montoBs'] ?? 0) as num).toStringAsFixed(2)} Bs",
+                    style: const pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold, fontSize: 9)),
+              ],
+            ),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text("Tasa:", style: const pw.TextStyle(fontSize: 7)),
+                pw.Text("${((datos['tasa'] ?? 0) as num).toStringAsFixed(2)} Bs/\$",
+                    style: const pw.TextStyle(fontSize: 7)),
+              ],
+            ),
+            pw.Divider(thickness: 0.5),
+            pw.SizedBox(height: 4),
+            pw.Center(
+                child: pw.Text(datos['textoLegal'] ?? '',
+                    style: const pw.TextStyle(fontSize: 6),
+                    textAlign: pw.TextAlign.center)),
+            if (notaLegal != null && notaLegal.isNotEmpty) ...[
+              pw.SizedBox(height: 6),
+              pw.Divider(thickness: 0.3, color: PdfColors.grey400),
+              pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 6),
+                child: pw.Text(notaLegal,
+                    style: const pw.TextStyle(
+                        fontSize: 6, color: PdfColors.grey700),
+                    textAlign: pw.TextAlign.justify),
+              ),
+            ],
+            pw.SizedBox(height: 20),
+            pw.Center(
+                child: pw.Text("__________________________",
+                    style: const pw.TextStyle(fontSize: 7))),
+            pw.Center(
+                child: pw.Text("Firma del Trabajador",
+                    style: const pw.TextStyle(fontSize: 6))),
+          ],
+        );
+      },
+    ));
+
+    await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async => doc.save());
+  }
+
+  void _mostrarDialogoRecibo(
+      BuildContext context, Map<String, dynamic> datos) {
+    final notaLegal = datos['notaLegalBono'] as String?;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        contentPadding: EdgeInsets.zero,
+        content: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF0F52BA),
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(10),
+                    topRight: Radius.circular(10),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.receipt_long, size: 15, color: Colors.white),
+                        SizedBox(width: 8),
+                        Text("COMPROBANTE REIMPRESO",
+                            style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                                letterSpacing: 0.5)),
+                      ],
+                    ),
+                    InkWell(
+                      onTap: () => Navigator.pop(context),
+                      child: const Icon(Icons.close,
+                          size: 16, color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text("Fecha: ${datos['fecha'] ?? ''}",
+                          style:
+                              const TextStyle(fontSize: 9, color: Colors.grey)),
+                      Text("Operación: ${datos['tipo'] ?? ''}",
+                          style: const TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text("Trabajador: ${datos['nombre'] ?? ''}",
+                          style: const TextStyle(fontSize: 10)),
+                      Text("Cédula: V-${datos['cedula'] ?? ''}",
+                          style: const TextStyle(fontSize: 10)),
+                      if (datos['fechaEgreso'] != null &&
+                          datos['fechaEgreso'].toString().isNotEmpty)
+                        Text("Fecha de Egreso: ${datos['fechaEgreso']}",
+                            style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red.shade700)),
+                      const Divider(height: 12),
+                      if (((datos['detSemana'] ?? 0) as num) > 0)
+                        _filaDesgloseRecibo("Sueldo Semanal",
+                            (datos['detSemana'] as num).toDouble(), Colors.black87),
+                      if (((datos['detPrestaciones'] ?? 0) as num) > 0)
+                        _filaDesgloseRecibo("Prestaciones",
+                            (datos['detPrestaciones'] as num).toDouble(), Colors.black87),
+                      if (((datos['detVacaciones'] ?? 0) as num) > 0)
+                        _filaDesgloseRecibo("Vacaciones + Bono",
+                            (datos['detVacaciones'] as num).toDouble(), Colors.black87),
+                      if (((datos['detUtilidades'] ?? 0) as num) > 0)
+                        _filaDesgloseRecibo("Utilidades",
+                            (datos['detUtilidades'] as num).toDouble(), Colors.black87),
+                      const Divider(height: 12),
+                      if (((datos['detAyudaFamiliar'] ?? 0) as num) > 0)
+                        _filaDesgloseRecibo("Ayuda Familiar",
+                            (datos['detAyudaFamiliar'] as num).toDouble(), Colors.grey.shade700),
+                      if (((datos['detBonoAlimenticio'] ?? 0) as num) > 0)
+                        _filaDesgloseRecibo("Bono Alimenticio",
+                            (datos['detBonoAlimenticio'] as num).toDouble(), Colors.grey.shade700),
+                      const Divider(height: 12),
+                      if (((datos['descuentoDeuda'] ?? 0) as num) > 0) ...[
+                        const Divider(height: 12),
+                        _filaDesgloseRecibo("Deuda Anterior",
+                            (datos['deudaAnterior'] as num).toDouble(), Colors.red.shade700),
+                        _filaDesgloseRecibo("Abono a Deuda",
+                            -(datos['descuentoDeuda'] as num).toDouble(), Colors.green.shade700),
+                        _filaDesgloseRecibo("Nueva Deuda",
+                            (datos['nuevoSaldoDeuda'] as num).toDouble(), Colors.red.shade900,
+                            negrita: true),
+                      ],
+                      _filaDesgloseRecibo("TOTAL USD",
+                          ((datos['montoUSD'] ?? 0) as num).toDouble(), Colors.blue,
+                          negrita: true, grande: true),
+                      _filaDesgloseRecibo("TOTAL Bs",
+                          ((datos['montoBs'] ?? 0) as num).toDouble(), Colors.green,
+                          negrita: true, grande: true),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(5),
+                        decoration: BoxDecoration(
+                            color: Colors.amber.shade50,
+                            borderRadius: BorderRadius.circular(4)),
+                        child: Text(datos['textoLegal'] ?? '',
+                            style: const TextStyle(
+                                fontSize: 8,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.brown),
+                            textAlign: TextAlign.center),
+                      ),
+                      if (notaLegal != null && notaLegal.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        const Divider(height: 1),
+                        const SizedBox(height: 6),
+                        Text(notaLegal,
+                            style: const TextStyle(
+                                fontSize: 8,
+                                color: Colors.black54,
+                                fontStyle: FontStyle.italic),
+                            textAlign: TextAlign.justify),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(10),
+                    bottomRight: Radius.circular(10),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 34,
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.print, size: 13),
+                          label: const Text("TICKET 80mm",
+                              style: TextStyle(
+                                  fontSize: 10, fontWeight: FontWeight.bold)),
+                          onPressed: () async {
+                            await _imprimirReciboDocumento(datos, true);
+                            if (!context.mounted) return;
+                            Navigator.pop(context);
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: SizedBox(
+                        height: 34,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF0F52BA),
+                            foregroundColor: Colors.white,
+                          ),
+                          icon: const Icon(Icons.picture_as_pdf, size: 13),
+                          label: const Text("PDF",
+                              style: TextStyle(
+                                  fontSize: 10, fontWeight: FontWeight.bold)),
+                          onPressed: () async {
+                            await _imprimirReciboDocumento(datos, false);
+                            if (!context.mounted) return;
+                            Navigator.pop(context);
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   String _limpiarOrigen(String origen) {
     final idx = origen.indexOf(':');
     if (idx > 0) {
