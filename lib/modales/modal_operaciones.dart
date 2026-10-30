@@ -79,6 +79,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
   String _cuentaOrigenTraspaso = "Bancamiga";
   String _cuentaDestinoTraspaso = "Banesco";
   String _tipoTraspaso = "OTRO_BANCO";
+  String _origenFondosTraspaso = "ACUMULADO";
   String? _monedaCalcTraspaso;
   final TextEditingController _montoTraspasoCtrl = TextEditingController();
   final TextEditingController _conceptoTraspasoCtrl =
@@ -1251,6 +1252,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       "monedaOrigen": monedaOrigen,
       "monedaDestino": monedaDestino,
       "tipoTraspaso": _tipoTraspaso,
+      "origenFondos": _origenFondosTraspaso,
       "concepto": _conceptoTraspasoCtrl.text.trim(),
       "tasaUSD": widget.tasaUSD,
       "tasaUSDT": widget.tasaUSDT,
@@ -2464,6 +2466,27 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
                             style: TextStyle(fontSize: 11))),
                   ],
                   onChanged: (v) => setState(() => _tipoTraspaso = v!),
+                ),
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                height: 36,
+                child: DropdownButtonFormField<String>(
+                  initialValue: _origenFondosTraspaso,
+                  isExpanded: true,
+                  style: const TextStyle(fontSize: 11, color: Colors.black87),
+                  decoration: _inputDec(hint: "Origen de fondos"),
+                  items: const [
+                    DropdownMenuItem(
+                        value: "ACUMULADO",
+                        child: Text("Del acumulado",
+                            style: TextStyle(fontSize: 11))),
+                    DropdownMenuItem(
+                        value: "VENTA_DIA",
+                        child: Text("De la venta del día",
+                            style: TextStyle(fontSize: 11))),
+                  ],
+                  onChanged: (v) => setState(() => _origenFondosTraspaso = v!),
                 ),
               ),
               const SizedBox(height: 6),
