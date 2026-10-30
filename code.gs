@@ -39,6 +39,59 @@ function limpiarNumero(valor) {
   return parseFloat(str) || 0.0;
 }
 
+function round2(num) {
+  return Math.round((limpiarNumero(num) + Number.EPSILON) * 100) / 100;
+}
+
+function buscarCuenta(nombreCuenta) {
+  var nombreClean = (nombreCuenta || "").toString().trim();
+  var keyCleanBuscada = nombreClean.toUpperCase().replace(/[_ ]/g, "");
+
+  try {
+    var ss = obtenerSpreadsheet();
+    var sheet = ss.getSheetByName("MAESTRO_CUENTAS");
+    if (sheet) {
+      var lastRow = sheet.getLastRow();
+      if (lastRow >= 2) {
+        var data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+        for (var i = 0; i < data.length; i++) {
+          var ctaFila = data[i][0] ? data[i][0].toString().trim() : "";
+          var keyCleanFila = ctaFila.toUpperCase().replace(/[_ ]/g, "");
+          if (keyCleanFila === keyCleanBuscada) {
+            return {
+              cuentaId: ctaFila,
+              nombre: ctaFila,
+              moneda: data[i][1] ? data[i][1].toString().trim().toUpperCase() : "BS",
+              afectaCierre: data[i][2] === true || (data[i][2] && data[i][2].toString().toUpperCase() === "SI") || data[i][2] === "S"
+            };
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  var moneda = "BS";
+  var upper = keyCleanBuscada;
+  if (upper.indexOf("USDT") !== -1 || upper.indexOf("BINANCE") !== -1) {
+    moneda = "USDT";
+  } else if (upper.indexOf("EUR") !== -1 || upper.indexOf("EURO") !== -1) {
+    moneda = "EUR";
+  } else if (upper.indexOf("USD") !== -1 || upper.indexOf("DOLAR") !== -1 || upper.indexOf("DOLARES") !== -1) {
+    moneda = "USD";
+  }
+
+  return {
+    cuentaId: nombreClean,
+    nombre: nombreClean,
+    moneda: moneda,
+    afectaCierre: false
+  };
+}
+
+function monedaDeCuenta(nombreCuenta) {
+  return buscarCuenta(nombreCuenta).moneda;
+}
+
 function extraerDatosPeticion(e) {
   var action = "";
   var payload = {};
@@ -119,6 +172,7 @@ function manejarPeticionApi(action, payload) {
       else if (action === "obtenerDetalleCierre") resG = obtenerDetalleCierre(payload);
       else if (action === "obtenerHistorialPrestamos") resG = obtenerHistorialPrestamos(payload);
       else if (action === "obtenerDetalleRecibo") resG = obtenerDetalleRecibo(payload);
+      else if (action === "auditarIntegridadSaldos") resG = auditarIntegridadSaldos(payload);
     } catch (err) {
       return responderJSON({ status: "ERROR", mensaje: "Excepción GET: " + err.toString() });
     }
@@ -374,6 +428,21 @@ function obtenerTasaPorFecha(fecha) {
   return null;
 }
 
+function obtenerTasa(fechaStr, tipo) {
+  var tipoUpper = (tipo || 'BCV').toUpperCase();
+  if (fechaStr) {
+    var t = obtenerTasaPorFecha(fechaStr);
+    if (t && t[tipoUpper] && t[tipoUpper] > 0) {
+      return t[tipoUpper];
+    }
+  }
+  var cfg = obtenerTasasConfig();
+  if (cfg && cfg.tasas && cfg.tasas[tipoUpper] && cfg.tasas[tipoUpper] > 0) {
+    return cfg.tasas[tipoUpper];
+  }
+  return cfg.tasaUSD || 1.0;
+}
+
 function obtenerDiaSiguienteHabil(fechaStr) {
   var fecha = new Date(fechaStr + "T12:00:00");
   fecha.setDate(fecha.getDate() + 1);
@@ -503,10 +572,14 @@ function obtenerConsultasConFecha(params) {
           origen: row[3] ? row[3].toString() : "",
           destino: row[4] ? row[4].toString() : "",
           monto: monto, moneda: row[6] ? row[6].toString() : "BS",
-          montoNeto: montoNeto, comision: comision,
+          montoNeto: montoNeto,
+          montoBs: (row[7] !== undefined && row[7] !== "") ? limpiarNumero(row[7]) : montoNeto,
+          comision: comision,
           concepto: row[9] ? row[9].toString() : "",
           tasaUsd: limpiarNumero(row[10]),
-          tasaUsdt: limpiarNumero(row[11]),
+          tasaUsdt: (typeof row[11] === "number") ? limpiarNumero(row[11]) : 0,
+          tasa: limpiarNumero(row[10]),
+          fuenteTasa: (typeof row[11] === "string" && row[11] !== "") ? row[11].toString() : "BCV",
           categoria: categoria
         };
         movimientos.push(mov);
@@ -638,12 +711,70 @@ function registrarCierreJornada(payload) {
   }
   // === FIN IDEMPOTENCIA ===
 
-  var desglose = payload.desglose || payload.cuentasDesglose || payload.partidas || null;
-  if (typeof desglose === "string") {
-    try { desglose = JSON.parse(desglose); } catch (e) { desglose = null; }
+  var fechaOpStr = payload.fechaOperativa || payload.fechaOperacion || "";
+  var fechaCierre = new Date();
+  if (fechaOpStr.toString().trim() !== "") {
+    try {
+      var fp = new Date(fechaOpStr.toString().trim() + "T12:00:00");
+      if (!isNaN(fp.getTime())) fechaCierre = fp;
+    } catch (e) {}
   }
-  if (!desglose || typeof desglose !== "object") {
-    return { status: "ERROR", mensaje: "Desglose inválido o ausente." };
+  var fechaOpFormatted = Utilities.formatDate(fechaCierre, "America/Caracas", "yyyy-MM-dd");
+
+  var tasaBcv = obtenerTasa(fechaOpFormatted, 'BCV');
+  if (payload.tasaUSD || payload.tasaBCV) {
+    tasaBcv = limpiarNumero(payload.tasaUSD || payload.tasaBCV || tasaBcv);
+  }
+  var tasaUsdt = obtenerTasa(fechaOpFormatted, 'USDT');
+  if (payload.tasaUSDT) {
+    tasaUsdt = limpiarNumero(payload.tasaUSDT || tasaUsdt);
+  }
+
+  var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyyyMMdd") + "-" + Math.floor(Math.random() * 900 + 100);
+  var marcaIdemp = idempotenciaKey !== "" ? " | IDEMP:" + idempotenciaKey : "";
+
+  // Parse list of banks/accounts to process
+  var listaBancos = [];
+  if (Array.isArray(payload.bancos)) {
+    listaBancos = payload.bancos;
+  } else {
+    var desglose = payload.desglose || payload.cuentasDesglose || payload.partidas || null;
+    if (typeof desglose === "string") {
+      try { desglose = JSON.parse(desglose); } catch (e) { desglose = null; }
+    }
+    if (desglose && typeof desglose === "object") {
+      if (Array.isArray(desglose)) {
+        listaBancos = desglose;
+      } else {
+        for (var nombreCta in desglose) {
+          var itemCta = desglose[nombreCta];
+          if (typeof itemCta === "object" && itemCta !== null) {
+            listaBancos.push({
+              cuenta: nombreCta,
+              punto: itemCta.punto,
+              pagoMovil: itemCta.pagoMovil,
+              montoBruto: itemCta.montoBruto !== undefined ? itemCta.montoBruto : itemCta.bruto,
+              comision: itemCta.comision,
+              c1Activa: itemCta.comision1Activa,
+              c1Pct: itemCta.comision1Porcentaje,
+              c2Activa: itemCta.comision2Activa,
+              c2Pct: itemCta.comision2Porcentaje,
+              moneda: itemCta.moneda
+            });
+          } else {
+            listaBancos.push({
+              cuenta: nombreCta,
+              punto: itemCta,
+              pagoMovil: 0
+            });
+          }
+        }
+      }
+    }
+  }
+
+  if (!listaBancos || listaBancos.length === 0) {
+    return { status: "ERROR", mensaje: "Desglose o lista de bancos inválida o ausente." };
   }
 
   var filasHistorial = [];
@@ -651,80 +782,63 @@ function registrarCierreJornada(payload) {
   var totalNeto = 0;
   var totalEquivalenteBs = 0;
   var itemsProcesados = 0;
-  var tasaUSD = limpiarNumero(payload.tasaUSD || 0);
-  var tasaUSDT = limpiarNumero(payload.tasaUSDT || 0);
-  var marcaIdemp = idempotenciaKey !== "" ? " | IDEMP:" + idempotenciaKey : "";
-  // Generar ID de cierre ANTES del loop
-  var fechaCierre = new Date();
-if (payload.fechaOperacion && payload.fechaOperacion.toString().trim() !== "") {
-  try {
-    var fp = new Date(payload.fechaOperacion + "T12:00:00");
-    if (!isNaN(fp.getTime())) fechaCierre = fp;
-  } catch (e) {}
-}
 
-// Generar ID de cierre DESPUÉS de fijar fechaCierre
-var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyyyMMdd") + "-" + Math.floor(Math.random() * 900 + 100);
-  for (var nombreCuenta in desglose) {
-    var item = desglose[nombreCuenta];
-    var punto = 0, pagoMovil = 0;
-    var c1Activa = false, c1Pct = 0.25;
-    var c2Activa = false, c2Pct = 0.75;
-    var monedaItem = "BS";
+  for (var i = 0; i < listaBancos.length; i++) {
+    var b = listaBancos[i];
+    var cuentaNombre = b.cuenta || b.nombreCuenta || b.nombre || "";
+    if (!cuentaNombre) continue;
 
-    if (typeof item === "object" && item !== null) {
-      punto = limpiarNumero(item.punto || 0);
-      pagoMovil = limpiarNumero(item.pagoMovil || 0);
-      c1Activa = item.comision1Activa === true;
-      c1Pct = limpiarNumero(item.comision1Porcentaje || 0.25);
-      c2Activa = item.comision2Activa === true;
-      c2Pct = limpiarNumero(item.comision2Porcentaje || 0.75);
-      monedaItem = item.moneda ? item.moneda.toString().toUpperCase() : "BS";
-    } else {
-      punto = limpiarNumero(item);
-    }
+    var cuentaInfo = buscarCuenta(cuentaNombre);
+    var moneda = (b.moneda || cuentaInfo.moneda || "BS").toUpperCase();
+
+    var punto = limpiarNumero(b.punto !== undefined ? b.punto : (b.montoBruto !== undefined ? b.montoBruto : (b.bruto || 0)));
+    var pagoMovil = limpiarNumero(b.pagoMovil || 0);
 
     if (punto <= 0 && pagoMovil <= 0) continue;
 
     var comision = 0;
-    var netoPunto = punto;
+    if (b.comision !== undefined) {
+      comision = limpiarNumero(b.comision);
+    } else {
+      var c1Activa = b.c1Activa === true || b.comision1Activa === true;
+      var c1Pct = limpiarNumero(b.c1Pct !== undefined ? b.c1Pct : (b.comision1Porcentaje || 0.25));
+      var c2Activa = b.c2Activa === true || b.comision2Activa === true;
+      var c2Pct = limpiarNumero(b.c2Pct !== undefined ? b.c2Pct : (b.comision2Porcentaje || 0.75));
 
-    if (monedaItem === "BS" && punto > 0) {
-      if (c1Activa) {
-        var tasa1 = c1Pct / 100;
-        var antes1 = netoPunto;
-        netoPunto = netoPunto * (1 - tasa1);
-        comision += (antes1 - netoPunto);
-      }
-      if (c2Activa) {
-        var tasa2 = c2Pct / 100;
-        var antes2 = netoPunto;
-        netoPunto = netoPunto * (1 - tasa2);
-        comision += (antes2 - netoPunto);
+      var tempNeto = punto;
+      if (moneda === "BS" && punto > 0) {
+        if (c1Activa) {
+          var antes1 = tempNeto;
+          tempNeto = tempNeto * (1 - c1Pct / 100);
+          comision += (antes1 - tempNeto);
+        }
+        if (c2Activa) {
+          var antes2 = tempNeto;
+          tempNeto = tempNeto * (1 - c2Pct / 100);
+          comision += (antes2 - tempNeto);
+        }
       }
     }
 
-    var totalCuenta = netoPunto + pagoMovil;
-    actualizarSaldoEnHojaSaldos(sheetSaldos, nombreCuenta, totalCuenta, true);
+    comision = round2(comision);
+    var netoPunto = round2(punto - comision);
+    var totalCuentaNeto = round2(netoPunto + pagoMovil);
 
-    var equivBsItem = monedaItem === "USD" ? (punto + pagoMovil) * tasaUSD :
-                       monedaItem === "USDT" ? (punto + pagoMovil) * tasaUSDT :
-                       (punto + pagoMovil);
-    totalEquivalenteBs += equivBsItem;
+    actualizarSaldoEnHojaSaldos(cuentaInfo.cuentaId, +totalCuentaNeto);
+
+    var montoBsItem = (moneda === "BS") ? totalCuentaNeto : round2(totalCuentaNeto * (moneda === "USDT" ? tasaUsdt : tasaBcv));
+    totalEquivalenteBs += montoBsItem;
 
     if (punto > 0) {
-      var partesCom = [];
-      if (c1Activa) partesCom.push(c1Pct + "%");
-      if (c2Activa) partesCom.push(c2Pct + "%");
-      var detalleCom = partesCom.length > 0
-        ? " | Com: " + comision.toFixed(2) + " (" + partesCom.join("+") + ")"
-        : "";
       var idTxPos = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
+      var montoBsPos = (moneda === "BS") ? netoPunto : round2(netoPunto * (moneda === "USDT" ? tasaUsdt : tasaBcv));
+      var conceptoPos = "Cierre " + fechaOpFormatted + " — " + cuentaInfo.cuentaId + " — bruto " + punto.toFixed(2) + ", comisión " + comision.toFixed(2) + ", neto " + netoPunto.toFixed(2) + marcaIdemp;
+
       filasHistorial.push([
-        idTxPos, fechaCierre, "CIERRE_POS", "Cierre Jornada", nombreCuenta,
-        punto, monedaItem, netoPunto, comision,
-        "CIERRE POS - " + nombreCuenta + " | Punto: " + punto.toFixed(2) + detalleCom + marcaIdemp,
-        tasaUSD, tasaUSDT,
+        idTxPos, fechaCierre, "CIERRE_POS", "Cierre Jornada", cuentaInfo.cuentaId,
+        netoPunto, moneda, montoBsPos, comision,
+        conceptoPos,
+        tasaBcv, tasaUsdt,
         comision > 0 ? "COMISIONES" : "VENTAS",
         "S", "ACUMULADO", idCierre
       ]);
@@ -733,15 +847,28 @@ var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyy
     if (pagoMovil > 0) {
       var idTxPm = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
       filasHistorial.push([
-        idTxPm, fechaCierre, "CIERRE_PAGO_MOVIL", "Cierre Jornada", nombreCuenta,
+        idTxPm, fechaCierre, "CIERRE_PAGO_MOVIL", "Cierre Jornada", cuentaInfo.cuentaId,
         pagoMovil, "BS", pagoMovil, 0,
-        "CIERRE PAGO MÓVIL - " + nombreCuenta + " | Monto: " + pagoMovil.toFixed(2) + marcaIdemp,
-        tasaUSD, tasaUSDT, "VENTAS",
+        "CIERRE PAGO MÓVIL - " + cuentaInfo.cuentaId + " | Monto: " + pagoMovil.toFixed(2) + marcaIdemp,
+        tasaBcv, tasaUsdt, "VENTAS",
         "S", "ACUMULADO", idCierre
       ]);
     }
 
-    totalNeto += totalCuenta;
+    if (comision > 0) {
+      var idTxCom = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
+      var comisionBs = (moneda === "BS") ? comision : round2(comision * (moneda === "USDT" ? tasaUsdt : tasaBcv));
+      filasHistorial.push([
+        idTxCom, fechaCierre, "GASTO", "Gastos Bancarios", "",
+        comision, moneda, comisionBs, 0,
+        "Comisión cierre " + cuentaInfo.cuentaId + " — " + fechaOpFormatted + marcaIdemp,
+        tasaBcv, tasaUsdt, "COMISIONES",
+        "S", "ACUMULADO", idCierre
+      ]);
+      actualizarSaldoEnHojaSaldos("Gastos Bancarios", +comisionBs);
+    }
+
+    totalNeto += totalCuentaNeto;
     totalComisiones += comision;
     itemsProcesados++;
   }
@@ -767,7 +894,7 @@ var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyy
   var estadoCierre = diferencia < 0 ? "FALTANTE" : "CERRADO";
 
   if (sheetCierres) {
-    var totalCobradoUSD = tasaUSD > 0 ? (totalEquivalenteBs / tasaUSD) : 0;
+    var totalCobradoUSD = tasaBcv > 0 ? (totalEquivalenteBs / tasaBcv) : 0;
     sheetCierres.appendRow([
       idCierre, fechaCierre,
       limpiarNumero(payload.montoVentaUSD || payload.ventaTotalUsd || 0),
@@ -778,7 +905,7 @@ var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyy
       descuadreBs,
       estadoCierre,
       (payload.observacion || "") + marcaIdemp,
-      tasaUSD, tasaUSDT
+      tasaBcv, tasaUsdt
     ]);
   }
 
@@ -797,22 +924,20 @@ var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyy
                        " cierre " + idCierre + " · " + observacion;
 
     if (esFaltante) {
-      // EGRESO FALTANTE: resta de Caja por defecto
-      actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaAjuste, montoAuto, false);
+      actualizarSaldoEnHojaSaldos(cuentaAjuste, -montoAuto);
       sheetHistorial.appendRow([
         idTxAuto, fechaCierre, "EGRESO", cuentaAjuste, "VARIAS",
         montoAuto, "BS", montoAuto, 0,
         conceptoAuto,
-        tasaUSD, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre
+        tasaBcv, tasaUsdt, categoriaAuto, "N", "ACUMULADO", idCierre
       ]);
     } else {
-      // INGRESO SOBRANTE: suma a Caja por defecto
-      actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaAjuste, montoAuto, true);
+      actualizarSaldoEnHojaSaldos(cuentaAjuste, +montoAuto);
       sheetHistorial.appendRow([
         idTxAuto, fechaCierre, "INGRESO", "VARIAS", cuentaAjuste,
         montoAuto, "BS", montoAuto, 0,
         conceptoAuto,
-        tasaUSD, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre
+        tasaBcv, tasaUsdt, categoriaAuto, "N", "ACUMULADO", idCierre
       ]);
     }
   }
@@ -831,12 +956,46 @@ var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyy
 // 7. RESTO DE FUNCIONES
 // ============================================================================
 
-function actualizarSaldoEnHojaSaldos(sheetSaldos, nombreCuenta, montoDiferencia, esSuma) {
+function actualizarSaldoEnHojaSaldos(arg1, arg2, arg3, arg4) {
+  var ss = obtenerSpreadsheet();
+  var sheetSaldos = null;
+  var cuentaId = "";
+  var delta = 0;
+
+  if (typeof arg1 === "string" && typeof arg2 === "number") {
+    cuentaId = arg1;
+    delta = arg2;
+    sheetSaldos = ss.getSheetByName("SALDOS");
+  } else if (arg1 && typeof arg1.getLastRow === "function" && typeof arg2 === "string") {
+    sheetSaldos = arg1;
+    cuentaId = arg2;
+    var monto = limpiarNumero(arg3);
+    if (typeof arg4 === "boolean") {
+      delta = arg4 ? monto : -monto;
+    } else {
+      delta = monto;
+    }
+  } else if (typeof arg1 === "string") {
+    cuentaId = arg1;
+    delta = limpiarNumero(arg2);
+    sheetSaldos = ss.getSheetByName("SALDOS");
+  } else {
+    throw new Error("Parámetros inválidos para actualizarSaldoEnHojaSaldos");
+  }
+
+  if (!sheetSaldos) {
+    sheetSaldos = ss.getSheetByName("SALDOS");
+  }
+  if (!sheetSaldos) {
+    throw new Error("No existe la hoja SALDOS");
+  }
+
   var lastRow = sheetSaldos.getLastRow();
   var data = lastRow >= 2 ? sheetSaldos.getRange(2, 1, lastRow - 1, 2).getValues() : [];
   var targetRow = -1;
   var saldoActual = 0;
-  var keyCleanBuscada = nombreCuenta.toUpperCase().replace(/[_ ]/g, "");
+  var keyCleanBuscada = cuentaId.toUpperCase().replace(/[_ ]/g, "");
+
   for (var i = 0; i < data.length; i++) {
     var ctaFila = data[i][0] ? data[i][0].toString().trim() : "";
     var keyCleanFila = ctaFila.toUpperCase().replace(/[_ ]/g, "");
@@ -846,12 +1005,14 @@ function actualizarSaldoEnHojaSaldos(sheetSaldos, nombreCuenta, montoDiferencia,
       break;
     }
   }
-  var nuevoSaldo = esSuma ? (saldoActual + montoDiferencia) : (saldoActual - montoDiferencia);
+
+  var nuevoSaldo = round2(saldoActual + delta);
+
   if (targetRow !== -1) {
     sheetSaldos.getRange(targetRow, 2).setValue(nuevoSaldo);
   } else {
     var nuevaFila = sheetSaldos.getLastRow() + 1;
-    sheetSaldos.getRange(nuevaFila, 1).setValue(nombreCuenta);
+    sheetSaldos.getRange(nuevaFila, 1).setValue(cuentaId);
     sheetSaldos.getRange(nuevaFila, 2).setValue(nuevoSaldo);
   }
 }
@@ -1179,41 +1340,69 @@ function registrarCompraDivisa(payload) {
   // === FIN IDEMPOTENCIA ===
 
   var idTx = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
-  var cuentaOrigen = payload.cuentaOrigen || "Caja Efectivo Bs";
-  var cuentaDestino = payload.cuentaDestino || "USDT";
+  var origen = buscarCuenta(payload.cuentaOrigen || payload.cuentaSalida || "Caja Efectivo Bs");
+  var destino = buscarCuenta(payload.cuentaDestino || "USDT");
+  var tasaUsada = limpiarNumero(payload.tasaUsada || payload.tasaUSD || payload.tasaUSDT || 0);
   var montoDivisa = limpiarNumero(payload.montoDivisa || 0);
   var montoBs = limpiarNumero(payload.montoBs || 0);
-  var tasaUsada = limpiarNumero(payload.tasaUsada || 0);
-  var concepto = payload.concepto || "Compra de divisa";
-  if (montoBs <= 0 || montoDivisa <= 0) return { status: "ERROR", mensaje: "Montos inválidos" };
+  var fuenteTasa = payload.fuenteTasa || "MANUAL";
+
+  if (tasaUsada <= 0) {
+    return { status: "ERROR", mensaje: "Tasa inválida (debe ser mayor a 0)." };
+  }
+  if (origen.moneda === destino.moneda) {
+    return { status: "ERROR", mensaje: "Monedas de origen y destino deben ser distintas." };
+  }
+  if (Math.abs(round2(montoDivisa * tasaUsada) - round2(montoBs)) > 0.01) {
+    return { status: "ERROR", mensaje: "Conservación de monto falló: round2(montoDivisa * tasa) != round2(montoBs)" };
+  }
 
   var fechaTx = new Date();
-  if (payload.fechaOperacion && payload.fechaOperacion.toString().trim() !== "") {
+  var fechaOpStr = payload.fechaOperativa || payload.fechaOperacion || "";
+  if (fechaOpStr.toString().trim() !== "") {
     try {
-      var fechaParseada = new Date(payload.fechaOperacion + "T12:00:00");
+      var fechaParseada = new Date(fechaOpStr.toString().trim() + "T12:00:00");
       if (!isNaN(fechaParseada.getTime())) fechaTx = fechaParseada;
     } catch (e) {}
   }
 
-  var saldoDisponible = obtenerSaldoCuenta(sheetSaldos, cuentaOrigen);
+  var saldoDisponible = obtenerSaldoCuenta(sheetSaldos, origen.cuentaId);
   if (saldoDisponible < montoBs) {
-    return { status: "ERROR", mensaje: "Fondos insuficientes. Disponible: " + saldoDisponible.toFixed(2) };
+    return { status: "ERROR", mensaje: "Fondos insuficientes en " + origen.nombre + ". Disponible: " + saldoDisponible.toFixed(2) };
   }
 
-  actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaOrigen, montoBs, false);
-  actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaDestino, montoDivisa, true);
-
+  var idTx = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
+  var conceptoDetalle = "Compra " + montoDivisa + " " + destino.moneda + " a tasa " + tasaUsada + " desde " + origen.nombre;
+  if (payload.concepto && payload.concepto !== "Compra de divisa") {
+    conceptoDetalle = payload.concepto + " | " + conceptoDetalle;
+  }
   if (idempotenciaKey !== "") {
-    concepto = concepto + " | IDEMP:" + idempotenciaKey;
+    conceptoDetalle = conceptoDetalle + " | IDEMP:" + idempotenciaKey;
   }
 
   sheetHistorial.appendRow([
-    idTx, fechaTx, "COMPRA_DIVISA", cuentaOrigen, cuentaDestino,
-    montoBs, "BS", montoBs, 0,
-    concepto + " | " + montoDivisa.toFixed(2) + " a tasa " + tasaUsada,
-    tasaUsada, 0, "COMPRA_DIVISA", "N", "ACUMULADO"
+    idTx,
+    fechaTx,
+    'COMPRA_DIVISA',
+    origen.cuentaId,
+    destino.cuentaId,
+    montoBs,
+    origen.moneda,
+    montoBs,
+    0,
+    conceptoDetalle,
+    tasaUsada,
+    fuenteTasa,
+    'COMPRA_DIVISA',
+    'N',
+    'ACUMULADO',
+    ''
   ]);
-  return { status: "SUCCESS", exito: true, idTx: idTx, mensaje: "Compra de divisa registrada" };
+
+  actualizarSaldoEnHojaSaldos(origen.cuentaId, -montoBs);
+  actualizarSaldoEnHojaSaldos(destino.cuentaId, +montoDivisa);
+
+  return { status: "SUCCESS", exito: true, idTx: idTx, mensaje: "Compra de divisa registrada correctamente" };
 }
 
 function registrarTraspaso(payload) {
@@ -3371,8 +3560,12 @@ function _deltasDeMovimiento(mov, cuentaNorm) {
   if (tipo.indexOf("COMPRA_DIVISA") === 0) {
     if (_normCuenta(mov.origen) === cuentaNorm) deltas.push(-mov.monto);
     if (_normCuenta(mov.destino) === cuentaNorm) {
-      var mDiv = mov.concepto.match(/([\d.,]+)\s+a\s+tasa/i);
-      if (mDiv) deltas.push(limpiarNumero(mDiv[1]));
+      var mDiv = mov.concepto.match(/Compra\s+([\d.,]+)/i) || mov.concepto.match(/([\d.,]+)\s+.*?\s*a\s+tasa/i);
+      if (mDiv) {
+        deltas.push(limpiarNumero(mDiv[1]));
+      } else {
+        deltas.push(mov.monto);
+      }
     }
     return deltas;
   }
@@ -3391,7 +3584,11 @@ function _deltasDeMovimiento(mov, cuentaNorm) {
 
   if (tipo.indexOf("CIERRE_POS") === 0 || tipo.indexOf("CIERRE_PAGO_MOVIL") === 0) {
     if (_normCuenta(mov.destino) === cuentaNorm) {
-      deltas.push(mov.montoNeto > 0 ? mov.montoNeto : mov.monto);
+      if ((mov.moneda && mov.moneda !== "BS") || buscarCuenta(mov.destino).moneda !== "BS") {
+        deltas.push(mov.monto);
+      } else {
+        deltas.push(mov.montoNeto > 0 ? mov.montoNeto : mov.monto);
+      }
     }
     return deltas;
   }
@@ -3406,6 +3603,13 @@ function _deltasDeMovimiento(mov, cuentaNorm) {
       deltas.push(mov.montoNeto > 0 ? mov.montoNeto : mov.monto);
     }
     return deltas;
+  }
+
+  if (tipo.indexOf("GASTO") === 0) {
+    if (_normCuenta(mov.origen) === "GASTOSBANCARIOS" && cuentaNorm === "GASTOSBANCARIOS") {
+      deltas.push(mov.monto);
+      return deltas;
+    }
   }
 
   if (tipo.indexOf("EGRESO") === 0 ||
@@ -3573,6 +3777,101 @@ function obtenerConciliacionPorCuenta(payload) {
     fechaHasta: hasta,
     tasaUSD: tasaRango,
     cuentas: resultado
+  };
+}
+
+function auditarIntegridadSaldos(dryRunParam) {
+  var dryRun = dryRunParam !== false;
+  if (typeof dryRunParam === "object" && dryRunParam !== null && dryRunParam.dryRun !== undefined) {
+    dryRun = dryRunParam.dryRun !== false;
+  }
+
+  var ss = obtenerSpreadsheet();
+  var sheetSaldos = ss.getSheetByName("SALDOS");
+  var sheetHist = ss.getSheetByName("HISTORIAL");
+
+  if (!sheetSaldos || !sheetHist) {
+    return { status: "ERROR", mensaje: "Faltan pestañas SALDOS o HISTORIAL" };
+  }
+
+  var saldosActuales = {};
+  var lastS = sheetSaldos.getLastRow();
+  if (lastS >= 2) {
+    var dataS = sheetSaldos.getRange(2, 1, lastS - 1, 2).getValues();
+    for (var i = 0; i < dataS.length; i++) {
+      var cta = dataS[i][0] ? dataS[i][0].toString().trim() : "";
+      if (cta) saldosActuales[cta] = limpiarNumero(dataS[i][1]);
+    }
+  }
+
+  var tz = "America/Caracas";
+  var lastH = sheetHist.getLastRow();
+  var movimientos = [];
+  if (lastH >= 2) {
+    var dataH = sheetHist.getRange(2, 1, lastH - 1, 16).getValues();
+    for (var j = 0; j < dataH.length; j++) {
+      var row = dataH[j];
+      var idTx = row[0] ? row[0].toString().trim().toUpperCase() : "";
+      if (idTx.indexOf("TX-") !== 0) continue;
+      var f = _normalizarFecha(row[1], tz);
+      movimientos.push({
+        fecha: f,
+        tipo: row[2] ? row[2].toString().toUpperCase() : "",
+        origen: row[3] ? row[3].toString() : "",
+        destino: row[4] ? row[4].toString() : "",
+        monto: limpiarNumero(row[5]),
+        montoNeto: limpiarNumero(row[7]),
+        comision: limpiarNumero(row[8]),
+        concepto: row[9] ? row[9].toString() : "",
+        categoria: row[12] ? row[12].toString() : "",
+        tasaUSD: limpiarNumero(row[10]),
+        tasaUSDT: limpiarNumero(row[11])
+      });
+    }
+  }
+
+  var cuentas = Object.keys(saldosActuales);
+  var reportes = [];
+  var discrepancias = [];
+
+  for (var k = 0; k < cuentas.length; k++) {
+    var cuenta = cuentas[k];
+    var cuentaNorm = _normCuenta(cuenta);
+    var saldoActual = round2(saldosActuales[cuenta]);
+
+    var saldoTeorico = 0;
+    for (var m = 0; m < movimientos.length; m++) {
+      var deltas = _deltasDeMovimiento(movimientos[m], cuentaNorm);
+      for (var d = 0; d < deltas.length; d++) {
+        saldoTeorico += deltas[d];
+      }
+    }
+    saldoTeorico = round2(saldoTeorico);
+
+    var dif = round2(saldoActual - saldoTeorico);
+    var itemReporte = {
+      cuenta: cuenta,
+      saldoSistema: saldoActual,
+      saldoCalculado: saldoTeorico,
+      diferencia: dif
+    };
+    reportes.push(itemReporte);
+
+    if (Math.abs(dif) > 0.01) {
+      discrepancias.push(itemReporte);
+    }
+  }
+
+  return {
+    status: "SUCCESS",
+    dryRun: true,
+    totalCuentasAuditadas: cuentas.length,
+    cuentasConDiscrepancia: discrepancias.length,
+    discrepancias: discrepancias,
+    reporteCompleto: reportes,
+    mensaje: discrepancias.length === 0
+      ? "Auditoría de integridad exitosa: 0 discrepancias en todas las cuentas"
+      : "Alerta: Se detectaron " + discrepancias.length + " cuentas con discrepancia. Ver detalles."
   };
 }
 function testConciliacionTasas() {
