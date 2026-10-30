@@ -144,7 +144,7 @@ function manejarPeticionApi(action, payload) {
     else if (action === "registrarOperacion") res = registrarOperacion(payload);
     else if (action === "registrarIngreso") res = registrarIngreso(payload);
     else if (action === "registrarFaltante") res = registrarFaltante(payload);
-    else if (action === "registrarPrestamoTrabajador") res = registrarPrestamoTrabajador(payload);
+    else if (action === "registrarPrestamoTrabajador" || action === "registrarPrestamo") res = registrarPrestamoTrabajador(payload);
     else if (action === "obtenerMovimientosDelDia") res = obtenerMovimientosDelDia(payload);
     else if (action === "obtenerDashboard") res = obtenerDashboard(payload);
     else if (action === "registrarPendiente") res = registrarPendiente(payload);
@@ -1872,6 +1872,7 @@ function registrarTraspaso(payload) {
   var monedaDestino = (payload.monedaDestino || "BS").toString().toUpperCase();
   var tipoTraspaso = payload.tipoTraspaso || "OTRO_BANCO";
   var concepto = payload.concepto || "Traspaso entre cuentas";
+  var origenFondos = (payload.origenFondos || "ACUMULADO").toString().toUpperCase();
   var tasaUSD = limpiarNumero(payload.tasaUSD || 0);
   var tasaUSDT = limpiarNumero(payload.tasaUSDT || 0);
 
@@ -1936,7 +1937,7 @@ function registrarTraspaso(payload) {
     concepto + detalleCom +
       " | Enviado: " + montoOrigen.toFixed(2) + " " + monedaOrigen +
       " | Recibido: " + montoDestino.toFixed(2) + " " + monedaDestino,
-    tasaUSD, tasaUSDT, "TRASPASO", "N", "ACUMULADO", "",
+    tasaUSD, tasaUSDT, "TRASPASO", "N", origenFondos, "",
     tasaFinalTr, fuenteFinalTr, montoBsTr
   ]);
 
@@ -2905,6 +2906,7 @@ function obtenerMovimientosDelDia(payload) {
                    tipo.indexOf("CARGO_FIJO") === 0 ||
                    tipo.indexOf("PAGO_NOMINA") === 0 ||
                    tipo.indexOf("LIQUIDACION") === 0 ||
+                   tipo.indexOf("PRESTAMO") === 0 ||
                    tipo.indexOf("FALTANTE") === 0;
     var esTraspaso = tipo.indexOf("TRASPASO") === 0;
 
@@ -3276,6 +3278,8 @@ function obtenerDetalleCierre(payload) {
     } else if (tipo.indexOf("EGRESO") === 0 ||
                tipo.indexOf("PAGO_NOMINA") === 0 ||
                tipo.indexOf("LIQUIDACION") === 0 ||
+               tipo.indexOf("PRESTAMO") === 0 ||
+               tipo.indexOf("TRASPASO") === 0 ||
                tipo.indexOf("FALTANTE") === 0) {
       var item = {
         idTx: idTx,
@@ -3290,7 +3294,7 @@ function obtenerDetalleCierre(payload) {
       };
       if (origenFondos === "VENTA_DIA") {
         gastosVenta.push(item);
-      } else {
+      } else if (tipo.indexOf("TRASPASO") !== 0) {
         gastosAcumulado.push(item);
       }
     }
@@ -4065,6 +4069,7 @@ function _deltasDeMovimiento(mov, cuentaNorm) {
 
   if (tipo.indexOf("EGRESO") === 0 ||
       tipo.indexOf("CARGO") === 0 ||
+      tipo.indexOf("PRESTAMO") === 0 ||
       tipo.indexOf("FALTANTE") === 0) {
     var partesE = _parseCuentasMulti(mov.origen);
     if (partesE.length > 0) {
