@@ -119,6 +119,7 @@ function manejarPeticionApi(action, payload) {
       else if (action === "obtenerDetalleCierre") resG = obtenerDetalleCierre(payload);
       else if (action === "obtenerHistorialPrestamos") resG = obtenerHistorialPrestamos(payload);
       else if (action === "obtenerDetalleRecibo") resG = obtenerDetalleRecibo(payload);
+      else if (action === "auditarIntegridadSaldos") resG = auditarIntegridadSaldos(payload ? payload.dryRun : true);
     } catch (err) {
       return responderJSON({ status: "ERROR", mensaje: "Excepción GET: " + err.toString() });
     }
@@ -643,6 +644,74 @@ function obtenerTasaPorFecha(fecha) {
   return null;
 }
 
+function _r2(num) {
+  var val = limpiarNumero(num);
+  return Math.round((val + Number.EPSILON) * 100) / 100;
+}
+
+function obtenerTasa(fecha, fuente) {
+  var fuenteNorm = (fuente || "BCV").toString().toUpperCase().trim();
+  var fechaNorm = fecha ? fecha.toString().substring(0, 10) : "";
+  if (fechaNorm) {
+    try {
+      var tf = obtenerTasaPorFecha(fechaNorm);
+      if (tf && tf[fuenteNorm] && tf[fuenteNorm] > 0) return tf[fuenteNorm];
+      if (tf && tf.BCV && tf.BCV > 0) return tf.BCV;
+    } catch (e) {}
+  }
+  try {
+    var cfg = obtenerTasasConfig();
+    if (cfg && cfg.tasas && cfg.tasas[fuenteNorm] && cfg.tasas[fuenteNorm] > 0) return cfg.tasas[fuenteNorm];
+    if (cfg && cfg.tasas && cfg.tasas.BCV && cfg.tasas.BCV > 0) return cfg.tasas.BCV;
+    if (cfg && cfg.tasaUSD && cfg.tasaUSD > 0) return cfg.tasaUSD;
+  } catch (e) {}
+  return 1.0;
+}
+
+function buscarCuenta(nombreCuenta) {
+  var nombreClean = (nombreCuenta || "").toString().trim();
+  if (!nombreClean) return { cuentaId: "", nombre: "", moneda: "BS" };
+
+  try {
+    var mc = obtenerMaestroCuentas();
+    if (mc && mc.cuentas && mc.cuentas.length > 0) {
+      var keyBuscada = nombreClean.toUpperCase().replace(/[_ ]/g, "");
+      for (var i = 0; i < mc.cuentas.length; i++) {
+        var c = mc.cuentas[i];
+        var keyFila = (c.nombre || "").toUpperCase().replace(/[_ ]/g, "");
+        if (keyFila === keyBuscada) {
+          return {
+            cuentaId: c.nombre,
+            nombre: c.nombre,
+            moneda: (c.moneda || "BS").toUpperCase()
+          };
+        }
+      }
+    }
+  } catch (e) {}
+
+  var nameUpper = nombreClean.toUpperCase();
+  var moneda = "BS";
+  if (nameUpper.indexOf("USDT") !== -1 || nameUpper.indexOf("BINANCE") !== -1) {
+    moneda = "USDT";
+  } else if (nameUpper.indexOf("USD") !== -1 || nameUpper.indexOf("DOLAR") !== -1 || nameUpper.indexOf("DÓLAR") !== -1 || nameUpper.indexOf("CASH USD") !== -1) {
+    moneda = "USD";
+  } else if (nameUpper.indexOf("EUR") !== -1 || nameUpper.indexOf("EURO") !== -1) {
+    moneda = "EUR";
+  }
+
+  return {
+    cuentaId: nombreClean,
+    nombre: nombreClean,
+    moneda: moneda
+  };
+}
+
+function monedaDeCuenta(nombreCuenta) {
+  var c = buscarCuenta(nombreCuenta);
+  return c ? c.moneda : "BS";
+}
+
 function obtenerDiaSiguienteHabil(fechaStr) {
   var fecha = new Date(fechaStr + "T12:00:00");
   fecha.setDate(fecha.getDate() + 1);
@@ -895,8 +964,21 @@ function registrarCierreJornada(payload) {
   if (!sheetHistorial) return { status: "ERROR", mensaje: "No existe HISTORIAL" };
   if (!sheetSaldos) return { status: "ERROR", mensaje: "No existe SALDOS" };
 
+  var fechaOpStr = (payload.fechaOperativa || payload.fechaOperacion || "").toString().trim();
+  var fechaCierre = new Date();
+  if (fechaOpStr !== "") {
+    try {
+      var fp = new Date(fechaOpStr + "T12:00:00");
+      if (!isNaN(fp.getTime())) fechaCierre = fp;
+    } catch (e) {}
+  }
+  var fechaOp = Utilities.formatDate(fechaCierre, "America/Caracas", "yyyy-MM-dd");
+
+  var tasaBCV = _r2(limpiarNumero(payload.tasaUSD || payload.tasaBCV || obtenerTasa(fechaOp, "BCV")));
+  var tasaUSDT = _r2(limpiarNumero(payload.tasaUSDT || obtenerTasa(fechaOp, "USDT")));
+
   // === IDEMPOTENCIA ===
-  var idempotenciaKey = payload.idempotenciaKey || "";
+  var idempotenciaKey = (payload.idempotenciaKey || "").toString().trim();
   if (idempotenciaKey !== "") {
     var histCheck = sheetHistorial.getDataRange().getValues();
     var inicioBusqueda = histCheck.length > 100 ? histCheck.length - 100 : 1;
@@ -913,128 +995,156 @@ function registrarCierreJornada(payload) {
       }
     }
   }
-  // === FIN IDEMPOTENCIA ===
 
-  var desglose = payload.desglose || payload.cuentasDesglose || payload.partidas || null;
-  if (typeof desglose === "string") {
-    try { desglose = JSON.parse(desglose); } catch (e) { desglose = null; }
+  var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyyyMMdd") + "-" + Math.floor(Math.random() * 900 + 100);
+  var marcaIdemp = idempotenciaKey !== "" ? " | IDEMP:" + idempotenciaKey : "";
+
+  // Normalizar ítems de desglose / bancos
+  var itemsArray = [];
+  if (Array.isArray(payload.bancos)) {
+    for (var bi = 0; bi < payload.bancos.length; bi++) {
+      var b = payload.bancos[bi];
+      if (!b) continue;
+      var ctaB = b.cuenta || b.nombreCuenta || b.nombre || "";
+      var brutoB = _r2(limpiarNumero(b.montoBruto !== undefined ? b.montoBruto : (b.bruto !== undefined ? b.bruto : (b.monto || b.punto || 0))));
+      var comB = _r2(limpiarNumero(b.comision !== undefined ? b.comision : 0));
+      var monB = (b.moneda || monedaDeCuenta(ctaB)).toString().toUpperCase().trim();
+      if (ctaB && (brutoB > 0 || comB > 0)) {
+        itemsArray.push({
+          cuenta: ctaB, punto: brutoB, pagoMovil: 0, comision: comB, moneda: monB
+        });
+      }
+    }
+  } else {
+    var desglose = payload.desglose || payload.cuentasDesglose || payload.partidas || null;
+    if (typeof desglose === "string") {
+      try { desglose = JSON.parse(desglose); } catch (e) { desglose = null; }
+    }
+    if (Array.isArray(desglose)) {
+      for (var di = 0; di < desglose.length; di++) {
+        var itemD = desglose[di];
+        if (!itemD) continue;
+        var ctaD = itemD.cuenta || itemD.nombre || "";
+        var pD = _r2(limpiarNumero(itemD.punto || itemD.montoBruto || itemD.monto || 0));
+        var pmD = _r2(limpiarNumero(itemD.pagoMovil || 0));
+        var comD = _r2(limpiarNumero(itemD.comision || 0));
+        var monD = (itemD.moneda || monedaDeCuenta(ctaD)).toString().toUpperCase().trim();
+        if (ctaD && (pD > 0 || pmD > 0 || comD > 0)) {
+          itemsArray.push({
+            cuenta: ctaD, punto: pD, pagoMovil: pmD, comision: comD, moneda: monD
+          });
+        }
+      }
+    } else if (desglose && typeof desglose === "object") {
+      for (var nombreCuenta in desglose) {
+        var itemObj = desglose[nombreCuenta];
+        var punto = 0, pagoMovil = 0, comisionObj = 0;
+        var c1Activa = false, c1Pct = 0.25;
+        var c2Activa = false, c2Pct = 0.75;
+        var monedaItem = monedaDeCuenta(nombreCuenta);
+
+        if (typeof itemObj === "object" && itemObj !== null) {
+          punto = _r2(limpiarNumero(itemObj.punto || itemObj.montoBruto || 0));
+          pagoMovil = _r2(limpiarNumero(itemObj.pagoMovil || 0));
+          comisionObj = _r2(limpiarNumero(itemObj.comision || 0));
+          c1Activa = itemObj.comision1Activa === true;
+          c1Pct = _r2(limpiarNumero(itemObj.comision1Porcentaje || 0.25));
+          c2Activa = itemObj.comision2Activa === true;
+          c2Pct = _r2(limpiarNumero(itemObj.comision2Porcentaje || 0.75));
+          if (itemObj.moneda) monedaItem = itemObj.moneda.toString().toUpperCase().trim();
+        } else {
+          punto = _r2(limpiarNumero(itemObj));
+        }
+
+        if (punto > 0 || pagoMovil > 0 || comisionObj > 0) {
+          itemsArray.push({
+            cuenta: nombreCuenta, punto: punto, pagoMovil: pagoMovil,
+            comision: comisionObj, moneda: monedaItem,
+            c1Activa: c1Activa, c1Pct: c1Pct, c2Activa: c2Activa, c2Pct: c2Pct
+          });
+        }
+      }
+    }
   }
-  if (!desglose || typeof desglose !== "object") {
-    return { status: "ERROR", mensaje: "Desglose inválido o ausente." };
+
+  if (itemsArray.length === 0) {
+    return { status: "ERROR", mensaje: "No hay montos válidos para registrar en el cierre." };
   }
 
   var filasHistorial = [];
   var totalComisiones = 0;
   var totalNeto = 0;
   var totalEquivalenteBs = 0;
-  var itemsProcesados = 0;
-  var tasaUSD = limpiarNumero(payload.tasaUSD || 0);
-  var tasaUSDT = limpiarNumero(payload.tasaUSDT || 0);
-  var marcaIdemp = idempotenciaKey !== "" ? " | IDEMP:" + idempotenciaKey : "";
-  // Generar ID de cierre ANTES del loop
-  var fechaCierre = new Date();
-if (payload.fechaOperacion && payload.fechaOperacion.toString().trim() !== "") {
-  try {
-    var fp = new Date(payload.fechaOperacion + "T12:00:00");
-    if (!isNaN(fp.getTime())) fechaCierre = fp;
-  } catch (e) {}
-}
 
-// Generar ID de cierre DESPUÉS de fijar fechaCierre
-var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyyyMMdd") + "-" + Math.floor(Math.random() * 900 + 100);
-  var fechaCierreStr = Utilities.formatDate(fechaCierre, "America/Caracas", "yyyy-MM-dd");
-  var tasaBcvPayload = limpiarNumero(payload.tasaBcv || payload.tasaUSD || 0);
-  if (tasaBcvPayload > 0) {
-    try { actualizarTasas({ BCV: tasaBcvPayload, usuario: payload.usuario || "CIERRE" }); } catch(e){}
-  }
-  var tasaRefCierre = obtenerTasa(fechaCierreStr, "BCV");
+  for (var k = 0; k < itemsArray.length; k++) {
+    var it = itemsArray[k];
+    var comision = it.comision;
+    var netoPunto = it.punto;
 
-  for (var nombreCuenta in desglose) {
-    var item = desglose[nombreCuenta];
-    var punto = 0, pagoMovil = 0;
-    var c1Activa = false, c1Pct = 0.25;
-    var c2Activa = false, c2Pct = 0.75;
-    var monedaItem = "BS";
-
-    if (typeof item === "object" && item !== null) {
-      punto = limpiarNumero(item.punto || 0);
-      pagoMovil = limpiarNumero(item.pagoMovil || 0);
-      c1Activa = item.comision1Activa === true;
-      c1Pct = limpiarNumero(item.comision1Porcentaje || 0.25);
-      c2Activa = item.comision2Activa === true;
-      c2Pct = limpiarNumero(item.comision2Porcentaje || 0.75);
-      monedaItem = item.moneda ? item.moneda.toString().toUpperCase() : "BS";
-    } else {
-      punto = limpiarNumero(item);
+    if (comision <= 0 && (it.c1Activa || it.c2Activa)) {
+      if (it.c1Activa) {
+        var t1 = it.c1Pct / 100;
+        var a1 = netoPunto;
+        netoPunto = _r2(netoPunto * (1 - t1));
+        comision = _r2(comision + (a1 - netoPunto));
+      }
+      if (it.c2Activa) {
+        var t2 = it.c2Pct / 100;
+        var a2 = netoPunto;
+        netoPunto = _r2(netoPunto * (1 - t2));
+        comision = _r2(comision + (a2 - netoPunto));
+      }
+    } else if (comision > 0) {
+      netoPunto = _r2(it.punto - comision);
     }
 
-    if (punto <= 0 && pagoMovil <= 0) continue;
+    var totalCuenta = _r2(netoPunto + it.pagoMovil);
+    actualizarSaldoEnHojaSaldos(sheetSaldos, it.cuenta, totalCuenta, true);
 
-    var comision = 0;
-    var netoPunto = punto;
+    var tasaItem = it.moneda === "USDT" ? tasaUSDT : (it.moneda === "USD" ? tasaBCV : 1.0);
+    var equivBsItem = (it.moneda === "BS") ? (it.punto + it.pagoMovil) : _r2((it.punto + it.pagoMovil) * tasaItem);
+    totalEquivalenteBs = _r2(totalEquivalenteBs + equivBsItem);
 
-    if (monedaItem === "BS" && punto > 0) {
-      if (c1Activa) {
-        var tasa1 = c1Pct / 100;
-        var antes1 = netoPunto;
-        netoPunto = netoPunto * (1 - tasa1);
-        comision += (antes1 - netoPunto);
-      }
-      if (c2Activa) {
-        var tasa2 = c2Pct / 100;
-        var antes2 = netoPunto;
-        netoPunto = netoPunto * (1 - tasa2);
-        comision += (antes2 - netoPunto);
-      }
-    }
-
-    var totalCuenta = netoPunto + pagoMovil;
-    actualizarSaldoEnHojaSaldos(sheetSaldos, nombreCuenta, totalCuenta, true);
-
-    var equivBsItem = monedaItem === "USD" ? (punto + pagoMovil) * tasaUSD :
-                       monedaItem === "USDT" ? (punto + pagoMovil) * tasaUSDT :
-                       (punto + pagoMovil);
-    totalEquivalenteBs += equivBsItem;
-
-    if (punto > 0) {
-      var partesCom = [];
-      if (c1Activa) partesCom.push(c1Pct + "%");
-      if (c2Activa) partesCom.push(c2Pct + "%");
-      var detalleCom = partesCom.length > 0
-        ? " | Com: " + comision.toFixed(2) + " (" + partesCom.join("+") + ")"
-        : "";
+    if (it.punto > 0) {
       var idTxPos = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
-      var equivBsPos = monedaItem === "USD" ? punto * tasaRefCierre : punto;
+      var montoBsPos = (it.moneda === "BS") ? netoPunto : _r2(netoPunto * tasaItem);
       filasHistorial.push([
-        idTxPos, fechaCierre, "CIERRE_POS", "Cierre Jornada", nombreCuenta,
-        punto, monedaItem, netoPunto, comision,
-        "CIERRE POS - " + nombreCuenta + " | Punto: " + punto.toFixed(2) + detalleCom + marcaIdemp,
-        tasaUSD, tasaUSDT,
+        idTxPos, fechaCierre, "CIERRE_POS", "Cierre Jornada", it.cuenta,
+        netoPunto, it.moneda, montoBsPos, comision,
+        "CIERRE POS - " + it.cuenta + " | Bruto: " + it.punto.toFixed(2) + ", Com: " + comision.toFixed(2) + ", Neto: " + netoPunto.toFixed(2) + marcaIdemp,
+        tasaBCV, tasaUSDT,
         comision > 0 ? "COMISIONES" : "VENTAS",
         "S", "ACUMULADO", idCierre,
         tasaRefCierre, "BCV", equivBsPos
       ]);
     }
 
-    if (pagoMovil > 0) {
+    if (it.pagoMovil > 0) {
       var idTxPm = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
+      var equivPm = (it.moneda === "BS") ? it.pagoMovil : _r2(it.pagoMovil * tasaItem);
       filasHistorial.push([
-        idTxPm, fechaCierre, "CIERRE_PAGO_MOVIL", "Cierre Jornada", nombreCuenta,
-        pagoMovil, "BS", pagoMovil, 0,
-        "CIERRE PAGO MÓVIL - " + nombreCuenta + " | Monto: " + pagoMovil.toFixed(2) + marcaIdemp,
-        tasaUSD, tasaUSDT, "VENTAS",
-        "S", "ACUMULADO", idCierre,
-        tasaRefCierre, "BCV", pagoMovil
+        idTxPm, fechaCierre, "CIERRE_PAGO_MOVIL", "Cierre Jornada", it.cuenta,
+        it.pagoMovil, it.moneda, equivPm, 0,
+        "CIERRE PAGO MÓVIL - " + it.cuenta + " | Monto: " + it.pagoMovil.toFixed(2) + marcaIdemp,
+        tasaBCV, tasaUSDT, "VENTAS",
+        "S", "ACUMULADO", idCierre
       ]);
     }
 
-    totalNeto += totalCuenta;
-    totalComisiones += comision;
-    itemsProcesados++;
-  }
+    if (comision > 0) {
+      var idTxCom = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
+      var comBs = (it.moneda === "BS") ? comision : _r2(comision * tasaItem);
+      filasHistorial.push([
+        idTxCom, fechaCierre, "GASTO", "Gastos Bancarios", "",
+        comision, it.moneda, comBs, 0,
+        "Comisión cierre " + it.cuenta + " — " + fechaOp + marcaIdemp,
+        tasaBCV, tasaUSDT, "GASTOS_BANCARIOS", "S", "ACUMULADO", idCierre
+      ]);
+      actualizarSaldoEnHojaSaldos(sheetSaldos, "Gastos Bancarios", comision, true);
+    }
 
-  if (itemsProcesados === 0) {
-    return { status: "ERROR", mensaje: "No hay montos válidos para registrar" };
+    totalNeto = _r2(totalNeto + totalCuenta);
+    totalComisiones = _r2(totalComisiones + comision);
   }
 
   var lastHRow = sheetHistorial.getLastRow();
@@ -1042,30 +1152,29 @@ var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyy
   sheetHistorial.getRange(targetRow, 1, filasHistorial.length, filasHistorial[0].length).setValues(filasHistorial);
 
   var fechaHoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
+  var ventaTotal = _r2(limpiarNumero(payload.ventaTotal !== undefined ? payload.ventaTotal : (payload.ventaEsperadaBs || payload.ventaTotalBs || 0)));
+  var distribuido = _r2(limpiarNumero(payload.distribuido !== undefined ? payload.distribuido : totalNeto));
+  var comisiones = _r2(limpiarNumero(payload.comisiones !== undefined ? payload.comisiones : totalComisiones));
+  var gastos = _r2(limpiarNumero(payload.gastos || 0));
+  var prestamos = _r2(limpiarNumero(payload.prestamos || 0));
 
-  var ventaTotal = limpiarNumero(payload.ventaTotal !== undefined ? payload.ventaTotal : (payload.ventaEsperadaBs || payload.ventaTotalBs || 0));
-  var distribuido = limpiarNumero(payload.distribuido !== undefined ? payload.distribuido : totalNeto);
-  var comisiones = limpiarNumero(payload.comisiones !== undefined ? payload.comisiones : totalComisiones);
-  var gastos = limpiarNumero(payload.gastos || 0);
-  var prestamos = limpiarNumero(payload.prestamos || 0);
-
-  var diferencia = ventaTotal - distribuido - comisiones - gastos - prestamos;
-  var descuadreBs = payload.descuadreBs !== undefined ? limpiarNumero(payload.descuadreBs) : diferencia;
+  var diferencia = _r2(ventaTotal - distribuido - comisiones - gastos - prestamos);
+  var descuadreBs = payload.descuadreBs !== undefined ? _r2(limpiarNumero(payload.descuadreBs)) : diferencia;
   var estadoCierre = diferencia < 0 ? "FALTANTE" : "CERRADO";
 
   if (sheetCierres) {
-    var totalCobradoUSD = tasaUSD > 0 ? (totalEquivalenteBs / tasaUSD) : 0;
+    var totalCobradoUSD = tasaBCV > 0 ? _r2(totalEquivalenteBs / tasaBCV) : 0;
     sheetCierres.appendRow([
       idCierre, fechaCierre,
-      limpiarNumero(payload.montoVentaUSD || payload.ventaTotalUsd || 0),
+      _r2(limpiarNumero(payload.montoVentaUSD || payload.ventaTotalUsd || 0)),
       ventaTotal,
-      limpiarNumero(payload.ventaUSDT || 0),
+      _r2(limpiarNumero(payload.ventaUSDT || 0)),
       totalEquivalenteBs,
       totalCobradoUSD,
       descuadreBs,
       estadoCierre,
       (payload.observacion || "") + marcaIdemp,
-      tasaUSD, tasaUSDT
+      tasaBCV, tasaUSDT
     ]);
   }
 
@@ -1073,7 +1182,6 @@ var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyy
   if (Math.abs(descuadreBs) > 0.01 || diferencia < 0) {
     var esFaltante = descuadreBs < 0 || diferencia < 0;
     var categoriaAuto = esFaltante ? "FALTANTE" : "AJUSTE";
-    var tipoAuto = esFaltante ? "EGRESO" : "INGRESO";
     var montoAuto = Math.abs(descuadreBs);
     var observacion = (payload.observacion || "").toString().trim();
     if (observacion === "") observacion = esFaltante ? "Sin motivo especificado" : "Sobrante no identificado";
@@ -1084,24 +1192,20 @@ var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyy
                        " cierre " + idCierre + " · " + observacion;
 
     if (esFaltante) {
-      // EGRESO FALTANTE: resta de Caja por defecto
       actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaAjuste, montoAuto, false);
       sheetHistorial.appendRow([
         idTxAuto, fechaCierre, "EGRESO", cuentaAjuste, "VARIAS",
         montoAuto, "BS", montoAuto, 0,
         conceptoAuto,
-        tasaUSD, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre,
-        tasaRefCierre, "BCV", montoAuto
+        tasaBCV, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre
       ]);
     } else {
-      // INGRESO SOBRANTE: suma a Caja por defecto
       actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaAjuste, montoAuto, true);
       sheetHistorial.appendRow([
         idTxAuto, fechaCierre, "INGRESO", "VARIAS", cuentaAjuste,
         montoAuto, "BS", montoAuto, 0,
         conceptoAuto,
-        tasaUSD, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre,
-        tasaRefCierre, "BCV", montoAuto
+        tasaBCV, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre
       ]);
     }
   }
@@ -1120,29 +1224,240 @@ var idCierre = "CJ-" + Utilities.formatDate(fechaCierre, "America/Caracas", "yyy
 // 7. RESTO DE FUNCIONES
 // ============================================================================
 
-function actualizarSaldoEnHojaSaldos(sheetSaldos, nombreCuenta, montoDiferencia, esSuma) {
+function actualizarSaldoEnHojaSaldos(param1, param2, param3, param4) {
+  var sheetSaldos, cuentaId, delta;
+
+  if (typeof param1 === "object" && param1 !== null && typeof param1.getName === "function") {
+    sheetSaldos = param1;
+    cuentaId = param2;
+    var monto = _r2(limpiarNumero(param3 || 0));
+    var esSuma = param4 !== false;
+    delta = esSuma ? monto : -monto;
+  } else {
+    var ss = obtenerSpreadsheet();
+    sheetSaldos = ss.getSheetByName("SALDOS");
+    cuentaId = param1;
+    delta = _r2(limpiarNumero(param2 || 0));
+  }
+
+  if (!sheetSaldos) {
+    var ss = obtenerSpreadsheet();
+    sheetSaldos = ss.getSheetByName("SALDOS");
+  }
+  if (!sheetSaldos) throw new Error("Hoja SALDOS no encontrada");
+
+  cuentaId = (cuentaId || "").toString().trim();
+  if (!cuentaId) throw new Error("Nombre de cuenta inválido");
+
   var lastRow = sheetSaldos.getLastRow();
   var data = lastRow >= 2 ? sheetSaldos.getRange(2, 1, lastRow - 1, 2).getValues() : [];
   var targetRow = -1;
   var saldoActual = 0;
-  var keyCleanBuscada = nombreCuenta.toUpperCase().replace(/[_ ]/g, "");
+  var keyCleanBuscada = cuentaId.toUpperCase().replace(/[_ ]/g, "");
+
   for (var i = 0; i < data.length; i++) {
     var ctaFila = data[i][0] ? data[i][0].toString().trim() : "";
     var keyCleanFila = ctaFila.toUpperCase().replace(/[_ ]/g, "");
     if (keyCleanFila === keyCleanBuscada) {
       targetRow = i + 2;
-      saldoActual = limpiarNumero(data[i][1]);
+      saldoActual = _r2(limpiarNumero(data[i][1]));
       break;
     }
   }
-  var nuevoSaldo = esSuma ? (saldoActual + montoDiferencia) : (saldoActual - montoDiferencia);
+
+  var nuevoSaldo = _r2(saldoActual + delta);
+
   if (targetRow !== -1) {
     sheetSaldos.getRange(targetRow, 2).setValue(nuevoSaldo);
   } else {
     var nuevaFila = sheetSaldos.getLastRow() + 1;
-    sheetSaldos.getRange(nuevaFila, 1).setValue(nombreCuenta);
+    sheetSaldos.getRange(nuevaFila, 1).setValue(cuentaId);
     sheetSaldos.getRange(nuevaFila, 2).setValue(nuevoSaldo);
   }
+
+  return nuevoSaldo;
+}
+
+function _obtenerCuentasDeMovimiento(mov) {
+  var tipo = (mov.tipo || "").toUpperCase();
+  var deltas = [];
+
+  if (tipo.indexOf("COMPRA_DIVISA") === 0) {
+    var origen = mov.origen;
+    var destino = mov.destino;
+    var montoOrig = _r2(mov.monto);
+    var tasa = _r2(mov.tasaUSD || mov.tasa || 0);
+
+    var montoDivisa = 0;
+    var matchDiv = (mov.concepto || "").match(/Compra\s+([\d.,]+)/i) || (mov.concepto || "").match(/([\d.,]+)\s+([A-Z]+)\s+a\s+tasa/i);
+    if (matchDiv) {
+      montoDivisa = _r2(limpiarNumero(matchDiv[1]));
+    } else if (tasa > 0) {
+      montoDivisa = _r2(montoOrig / tasa);
+    }
+
+    if (origen) deltas.push({ cuenta: origen, delta: -montoOrig });
+    if (destino && montoDivisa > 0) deltas.push({ cuenta: destino, delta: +montoDivisa });
+    return deltas;
+  }
+
+  if (tipo.indexOf("CIERRE_POS") === 0 || tipo.indexOf("CIERRE_PAGO_MOVIL") === 0 || tipo.indexOf("CIERRE") === 0) {
+    if (mov.destino) {
+      deltas.push({ cuenta: mov.destino, delta: +_r2(mov.monto) });
+    }
+    return deltas;
+  }
+
+  if (tipo.indexOf("GASTO") === 0 || tipo.indexOf("EGRESO") === 0 || tipo.indexOf("CARGO") === 0 || tipo.indexOf("FALTANTE") === 0 || tipo.indexOf("PAGO_NOMINA") === 0 || tipo.indexOf("LIQUIDACION") === 0 || tipo.indexOf("PRESTAMO") === 0) {
+    var montoTotal = _r2(mov.monto);
+    if (mov.origen && mov.origen !== "VARIAS" && mov.origen !== "Gastos Bancarios") {
+      deltas.push({ cuenta: mov.origen, delta: -montoTotal });
+    }
+    if (tipo.indexOf("GASTO") === 0 && mov.origen === "Gastos Bancarios") {
+      deltas.push({ cuenta: "Gastos Bancarios", delta: +montoTotal });
+    }
+    return deltas;
+  }
+
+  if (tipo.indexOf("INGRESO") === 0 || tipo.indexOf("SOBRANTE") === 0) {
+    if (mov.destino && mov.destino !== "VARIAS") {
+      deltas.push({ cuenta: mov.destino, delta: +_r2(mov.monto) });
+    }
+    return deltas;
+  }
+
+  if (tipo.indexOf("TRASPASO") === 0) {
+    var matchE = (mov.concepto || "").match(/Enviado:\s*([\d.,]+)/i);
+    var matchR = (mov.concepto || "").match(/Recibido:\s*([\d.,]+)/i);
+    var matchC = (mov.concepto || "").match(/Com:\s*([\d.,]+)/i);
+
+    var enviado = matchE ? _r2(limpiarNumero(matchE[1])) : _r2(mov.monto);
+    var recibido = matchR ? _r2(limpiarNumero(matchR[1])) : _r2(mov.montoNeto > 0 ? mov.montoNeto : mov.monto);
+    var comision = matchC ? _r2(limpiarNumero(matchC[1])) : _r2(mov.comision || 0);
+
+    if (mov.origen) deltas.push({ cuenta: mov.origen, delta: -_r2(enviado + comision) });
+    if (mov.destino) deltas.push({ cuenta: mov.destino, delta: +recibido });
+    return deltas;
+  }
+
+  return deltas;
+}
+
+function auditarIntegridadSaldos(dryRun) {
+  if (dryRun === undefined) dryRun = true;
+
+  var ss = obtenerSpreadsheet();
+  var sheetSaldos = ss.getSheetByName("SALDOS");
+  var sheetHist = ss.getSheetByName("HISTORIAL");
+
+  if (!sheetSaldos || !sheetHist) {
+    return { status: "ERROR", mensaje: "Faltan pestañas SALDOS o HISTORIAL" };
+  }
+
+  var saldosSistema = {};
+  var lastS = sheetSaldos.getLastRow();
+  if (lastS >= 2) {
+    var dataS = sheetSaldos.getRange(2, 1, lastS - 1, 2).getValues();
+    for (var i = 0; i < dataS.length; i++) {
+      var cta = dataS[i][0] ? dataS[i][0].toString().trim() : "";
+      if (cta) saldosSistema[cta] = _r2(limpiarNumero(dataS[i][1]));
+    }
+  }
+
+  var saldosTeoricos = {};
+  for (var c in saldosSistema) {
+    saldosTeoricos[c] = 0;
+  }
+
+  var lastH = sheetHist.getLastRow();
+  if (lastH >= 2) {
+    var dataH = sheetHist.getRange(2, 1, lastH - 1, 16).getValues();
+    for (var j = 0; j < dataH.length; j++) {
+      var row = dataH[j];
+      var idTx = row[0] ? row[0].toString().trim().toUpperCase() : "";
+      if (idTx.indexOf("TX-") !== 0) continue;
+
+      var tipo = row[2] ? row[2].toString().toUpperCase() : "";
+      var origen = row[3] ? row[3].toString().trim() : "";
+      var destino = row[4] ? row[4].toString().trim() : "";
+      var monto = _r2(limpiarNumero(row[5]));
+      var moneda = row[6] ? row[6].toString().toUpperCase().trim() : "BS";
+      var montoBs = _r2(limpiarNumero(row[7]));
+      var comision = _r2(limpiarNumero(row[8]));
+      var concepto = row[9] ? row[9].toString() : "";
+      var tasa = _r2(limpiarNumero(row[10]));
+
+      var mov = {
+        tipo: tipo,
+        origen: origen,
+        destino: destino,
+        monto: monto,
+        moneda: moneda,
+        montoNeto: montoBs,
+        comision: comision,
+        concepto: concepto,
+        tasa: tasa,
+        tasaUSD: tasa,
+        tasaUSDT: _r2(limpiarNumero(row[11]))
+      };
+
+      var deltas = _obtenerCuentasDeMovimiento(mov);
+      for (var k = 0; k < deltas.length; k++) {
+        var itemDelta = deltas[k];
+        var ctaKey = itemDelta.cuenta;
+        if (!ctaKey) continue;
+
+        var ctaEncontrada = null;
+        var keyCleanBuscada = ctaKey.toUpperCase().replace(/[_ ]/g, "");
+        for (var cNombre in saldosTeoricos) {
+          if (cNombre.toUpperCase().replace(/[_ ]/g, "") === keyCleanBuscada) {
+            ctaEncontrada = cNombre;
+            break;
+          }
+        }
+
+        if (!ctaEncontrada) {
+          ctaEncontrada = ctaKey;
+          saldosTeoricos[ctaEncontrada] = 0;
+        }
+
+        saldosTeoricos[ctaEncontrada] = _r2(saldosTeoricos[ctaEncontrada] + itemDelta.delta);
+      }
+    }
+  }
+
+  var discrepancias = [];
+  var todasCuentasMap = {};
+  for (var c1 in saldosSistema) todasCuentasMap[c1] = true;
+  for (var c2 in saldosTeoricos) todasCuentasMap[c2] = true;
+
+  for (var ctaNombre in todasCuentasMap) {
+    var sSis = saldosSistema[ctaNombre] !== undefined ? saldosSistema[ctaNombre] : 0;
+    var sTeor = saldosTeoricos[ctaNombre] !== undefined ? _r2(saldosTeoricos[ctaNombre]) : 0;
+    var diff = _r2(sSis - sTeor);
+
+    if (Math.abs(diff) > 0.01) {
+      discrepancias.push({
+        cuenta: ctaNombre,
+        saldoSistema: sSis,
+        saldoTeorico: sTeor,
+        diferencia: diff
+      });
+    }
+  }
+
+  var reporte = {
+    status: discrepancias.length === 0 ? "SUCCESS" : "ALERTA_DISCREPANCIA",
+    dryRun: true,
+    discrepanciasCount: discrepancias.length,
+    discrepancias: discrepancias,
+    mensaje: discrepancias.length === 0
+      ? "Auditoría de integridad de saldos: 0 discrepancias detectadas. Saldos 100% íntegros."
+      : "ALERTA: Se detectaron " + discrepancias.length + " discrepancia(s) entre HISTORIAL y SALDOS. Modo dryRun=true (sin modificaciones realizadas)."
+  };
+
+  Logger.log(JSON.stringify(reporte));
+  return reporte;
 }
 
 function actualizarSaldosYTasas(payload) {
@@ -1419,11 +1734,39 @@ function registrarCompraDivisa(payload) {
   var sheetSaldos = ss.getSheetByName("SALDOS");
   if (!sheetHistorial || !sheetSaldos) return { status: "ERROR", mensaje: "Faltan pestañas" };
 
+  var cuentaOrigenNombre = (payload.cuentaOrigen || payload.origen || "Caja Efectivo Bs").toString().trim();
+  var cuentaDestinoNombre = (payload.cuentaDestino || payload.destino || "Binance Pay").toString().trim();
+
+  var origen = buscarCuenta(cuentaOrigenNombre);
+  var destino = buscarCuenta(cuentaDestinoNombre);
+
+  var tasa = _r2(limpiarNumero(payload.tasaUsada !== undefined ? payload.tasaUsada : (payload.tasa || 0)));
+  var montoDivisa = _r2(limpiarNumero(payload.montoDivisa || payload.monto || 0));
+  var montoBs = _r2(limpiarNumero(payload.montoBs || 0));
+
+  if (montoBs <= 0 && montoDivisa > 0 && tasa > 0) {
+    montoBs = _r2(montoDivisa * tasa);
+  }
+
+  if (tasa <= 0) {
+    return { status: "ERROR", mensaje: "Tasa debe ser mayor a 0." };
+  }
+  if (montoDivisa <= 0 || montoBs <= 0) {
+    return { status: "ERROR", mensaje: "Montos inválidos." };
+  }
+  if (origen.moneda === destino.moneda) {
+    return { status: "ERROR", mensaje: "Las cuentas origen y destino deben tener monedas distintas (compra de divisa rechazada)." };
+  }
+  if (Math.abs(_r2(montoDivisa * tasa) - _r2(montoBs)) > 0.01) {
+    return { status: "ERROR", mensaje: "Conservación de monto ±0.01 violada: " + montoDivisa + " * " + tasa + " != " + montoBs };
+  }
+
   // === IDEMPOTENCIA ===
-  var idempotenciaKey = payload.idempotenciaKey || "";
+  var idempotenciaKey = (payload.idempotenciaKey || "").toString().trim();
   if (idempotenciaKey !== "") {
     var histCheck = sheetHistorial.getDataRange().getValues();
-    for (var hi = 1; hi < histCheck.length; hi++) {
+    var inicioBusqueda = histCheck.length > 100 ? histCheck.length - 100 : 1;
+    for (var hi = inicioBusqueda; hi < histCheck.length; hi++) {
       var conceptoFila = histCheck[hi][9] ? histCheck[hi][9].toString() : "";
       var sufijoKey = "IDEMP:" + idempotenciaKey;
       if (conceptoFila.indexOf(sufijoKey) !== -1) {
@@ -1436,33 +1779,23 @@ function registrarCompraDivisa(payload) {
       }
     }
   }
-  // === FIN IDEMPOTENCIA ===
 
   var idTx = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
-  var cuentaOrigen = payload.cuentaOrigen || "Caja Efectivo Bs";
-  var cuentaDestino = payload.cuentaDestino || "USDT";
-  var montoDivisa = limpiarNumero(payload.montoDivisa || 0);
-  var montoBs = limpiarNumero(payload.montoBs || 0);
-  var tasaUsada = limpiarNumero(payload.tasaUsada || 0);
-  var concepto = payload.concepto || "Compra de divisa";
-  if (montoBs <= 0 || montoDivisa <= 0) return { status: "ERROR", mensaje: "Montos inválidos" };
-
   var fechaTx = new Date();
-  if (payload.fechaOperacion && payload.fechaOperacion.toString().trim() !== "") {
+  var fechaOp = payload.fechaOperativa || payload.fechaOperacion || "";
+  if (fechaOp.toString().trim() !== "") {
     try {
-      var fechaParseada = new Date(payload.fechaOperacion + "T12:00:00");
-      if (!isNaN(fechaParseada.getTime())) fechaTx = fechaParseada;
+      var fp = new Date(fechaOp.toString().trim() + "T12:00:00");
+      if (!isNaN(fp.getTime())) fechaTx = fp;
     } catch (e) {}
   }
 
-  var saldoDisponible = obtenerSaldoCuenta(sheetSaldos, cuentaOrigen);
-  if (saldoDisponible < montoBs) {
-    return { status: "ERROR", mensaje: "Fondos insuficientes. Disponible: " + saldoDisponible.toFixed(2) };
+  var fuenteTasa = (payload.fuenteTasa || payload.fuente || (destino.moneda === "USDT" ? "USDT" : "MANUAL")).toString().toUpperCase();
+
+  var concepto = "Compra " + montoDivisa.toFixed(2) + " " + destino.moneda + " a tasa " + tasa.toFixed(2) + " desde " + origen.nombre;
+  if (payload.concepto && payload.concepto.toString().trim() !== "" && payload.concepto !== "Compra de divisa" && payload.concepto.indexOf("Compra") !== 0) {
+    concepto = payload.concepto.toString().trim() + " | " + concepto;
   }
-
-  actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaOrigen, montoBs, false);
-  actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaDestino, montoDivisa, true);
-
   if (idempotenciaKey !== "") {
     concepto = concepto + " | IDEMP:" + idempotenciaKey;
   }
@@ -1473,13 +1806,33 @@ function registrarCompraDivisa(payload) {
   var fuenteFinalCd = tasaUsada > 0 ? "MANUAL" : "USDT";
 
   sheetHistorial.appendRow([
-    idTx, fechaTx, "COMPRA_DIVISA", cuentaOrigen, cuentaDestino,
-    montoBs, "BS", montoBs, 0,
-    concepto + " | " + montoDivisa.toFixed(2) + " a tasa " + tasaUsada,
-    tasaUsada, 0, "COMPRA_DIVISA", "N", "ACUMULADO", "",
-    tasaFinalCd, fuenteFinalCd, montoBs
+    idTx,
+    fechaTx,
+    "COMPRA_DIVISA",
+    origen.cuentaId,
+    destino.cuentaId,
+    montoBs,          // MONTO = cuenta ORIGEN (montoBs)
+    origen.moneda,    // MONEDA = origen.moneda (NO hardcode)
+    montoBs,          // MONTO_BS
+    0,                // COMISION
+    concepto,         // CONCEPTO
+    tasa,             // TASA
+    fuenteTasa,       // FUENTE_TASA
+    "COMPRA_DIVISA",  // CATEGORIA
+    "ABIERTA",        // PARTE_DEL_CIERRE / ESTADO
+    "ACUMULADO",      // ORIGEN_FONDOS
+    ""                // ID_CIERRE
   ]);
-  return { status: "SUCCESS", exito: true, idTx: idTx, mensaje: "Compra de divisa registrada" };
+
+  actualizarSaldoEnHojaSaldos(origen.cuentaId, -montoBs);
+  actualizarSaldoEnHojaSaldos(destino.cuentaId, +montoDivisa);
+
+  return {
+    status: "SUCCESS",
+    exito: true,
+    idTx: idTx,
+    mensaje: "Compra de divisa registrada correctamente"
+  };
 }
 
 function registrarTraspaso(payload) {
