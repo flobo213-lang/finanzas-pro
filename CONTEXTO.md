@@ -37,7 +37,8 @@ El sistema está diseñado en un flujo lógico de 5 pasos secuenciales. Si una f
 
 *   **Moneda Base de Deuda:** USD.
 *   **Moneda de Pago:** Bs y USDT.
-*   **Etiquetado en HISTORIAL:** La columna `MONTO` y `MONEDA` deben corresponder a la cuenta de origen (si salió de BBVA, es Bs; si salió de USDT, es USDT).
+*   **Fuente de Verdad Cambiaria:** `obtenerTasa` es la única vía de lectura de tasas.
+*   **Etiquetado en HISTORIAL:** La columna `MONTO` y `MONEDA` deben corresponder a la cuenta de origen (si salió de BBVA, es Bs; si salió de USDT, es USDT). Todo movimiento insertado en `HISTORIAL` debe congelar la tasa usada en `TASA` y `FUENTE_TASA`, y el equivalente en Bs en `MONTO_BS`.
 *   **Saldos:** La función `actualizarSaldoEnHojaSaldos` debe hacer doble partida: resta en la cuenta origen y suma en la destino.
 
 ## 3. HISTORIAL DE BUGS CORREGIDOS (Para no repetirlos)
