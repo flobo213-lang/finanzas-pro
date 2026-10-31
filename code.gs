@@ -1544,6 +1544,21 @@ function buscarGastos(params) {
   return res;
 }
 
+function _resolverTasas(payload) {
+  var fechaOp = payload.fechaOperacion || Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
+  var hoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
+  var tasaUSD = limpiarNumero(payload.tasaUSD || 0);
+  var tasaUSDT = limpiarNumero(payload.tasaUSDT || 0);
+  if (fechaOp < hoy) {
+    var tasaHist = obtenerTasaPorFecha(fechaOp);
+    if (tasaHist && tasaHist.BCV > 0) {
+      tasaUSD = tasaHist.BCV;
+      tasaUSDT = tasaHist.USDT;
+    }
+  }
+  return { tasaUSD: tasaUSD, tasaUSDT: tasaUSDT };
+}
+
 function registrarOperacion(payload) {
   var ss = obtenerSpreadsheet();
   var sheetHistorial = ss.getSheetByName("HISTORIAL");
@@ -1579,8 +1594,9 @@ function registrarOperacion(payload) {
   var categoria = payload.categoria || "OPERATIVO";
   var tipoOperacion = payload.tipoOperacion || "EGRESO";
   var origenFondos = (payload.origenFondos || "ACUMULADO").toString().toUpperCase();
-  var tasaUSD = limpiarNumero(payload.tasaUSD || 0);
-  var tasaUSDT = limpiarNumero(payload.tasaUSDT || 0);
+  var tasasReales = _resolverTasas(payload);
+  var tasaUSD = tasasReales.tasaUSD;
+  var tasaUSDT = tasasReales.tasaUSDT;
   var parteDelCierre = payload.parteDelCierre === true ? "S" : "N";
 
   // === NUEVO: flag informativo (no afecta saldo) ===
@@ -2699,7 +2715,10 @@ function registrarTransaccion(payload) {
   var destino = (payload.destino || payload.cuentaDestino || "VARIAS").toString().trim();
   var monto = limpiarNumero(payload.monto !== undefined ? payload.monto : (payload.montoBs || payload.montoBsPagado || 0));
   var moneda = (payload.moneda || "BS").toString().toUpperCase();
-  var tasa = limpiarNumero(payload.tasa !== undefined ? payload.tasa : (payload.tasaUSD || payload.tasaBCV || 0));
+  var tasasReales = _resolverTasas(payload);
+  var tasaUSD = tasasReales.tasaUSD;
+  var tasaUSDT = tasasReales.tasaUSDT;
+  var tasa = limpiarNumero(payload.tasa !== undefined ? payload.tasa : (tasaUSD || payload.tasaBCV || 0));
   var tipoMovimiento = (payload.tipo_movimiento || payload.tipoMovimiento || payload.tipoOperacion || "GASTO").toString().toUpperCase().trim();
 
   var comision = limpiarNumero(payload.comision !== undefined ? payload.comision : (payload.comisionBs || 0));
