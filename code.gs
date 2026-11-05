@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.0 (diferencia cambiaria + tasas histórico)
+// Versión: 3.727 MODIFICADO DEEP 05-11-26 10.33AM
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -89,7 +89,7 @@ function manejarPeticionApi(action, payload) {
       action === "obtenerConsultasConFecha" ||
       action === "obtenerResumenGerencial" ||
       action === "obtenerPendientes" ||
-      action === "obtenerPendientesPorPagar" ||  // <--- AGREGADO AQUÍ
+      action === "obtenerPendientesPorPagar" ||
       action === "buscarGastos" ||
       action === "obtenerEstadisticas" ||
       action === "obtenerCierresDelRango" ||
@@ -110,7 +110,7 @@ function manejarPeticionApi(action, payload) {
       else if (action === "obtenerConsultasConFecha") resG = obtenerConsultasConFecha(payload);
       else if (action === "obtenerResumenGerencial") resG = obtenerResumenGerencial(payload);
       else if (action === "obtenerPendientes") resG = obtenerPendientes(payload);
-      else if (action === "obtenerPendientesPorPagar") resG = obtenerPendientesPorPagar(); // <--- AGREGADO AQUÍ
+      else if (action === "obtenerPendientesPorPagar") resG = obtenerPendientesPorPagar();
       else if (action === "buscarGastos") resG = buscarGastos(payload);
       else if (action === "obtenerEstadisticas") resG = obtenerEstadisticas(payload);
       else if (action === "obtenerDetallePorCategoria") resG = obtenerDetallePorCategoria(payload);
@@ -624,13 +624,9 @@ function obtenerTasaPorFecha(fecha) {
 
   var data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
   for (var i = 0; i < data.length; i++) {
-    var fechaFila = "";
-    try {
-      var f = data[i][0];
-      if (f instanceof Date) fechaFila = Utilities.formatDate(f, "America/Caracas", "yyyy-MM-dd");
-      else fechaFila = f.toString().substring(0, 10);
-    } catch (e) { fechaFila = data[i][0].toString().substring(0, 10); }
-
+    // ESTA ES LA MAGIA: Convierte "27/10/2026" a "2026-10-27" para poder compararlo
+    var fechaFila = _normalizarFecha(data[i][0], "America/Caracas"); 
+    
     if (fechaFila === fecha) {
       return {
         fecha: fecha,
@@ -973,6 +969,24 @@ function registrarCierreJornada(payload) {
     } catch (e) {}
   }
   var fechaOp = Utilities.formatDate(fechaCierre, "America/Caracas", "yyyy-MM-dd");
+    // === AUTO-CÁLCULO DE GASTOS Y PRÉSTAMOS DESDE LA VENTA DEL DÍA ===
+  var totalVentaDiaUsado = 0;
+  var histCheck = sheetHistorial.getDataRange().getValues();
+  for (var hc = 1; hc < histCheck.length; hc++) {
+    var rowHC = histCheck[hc];
+    var fechaHC = _normalizarFecha(rowHC[1], "America/Caracas");
+    var origenHC = (rowHC[14] || "ACUMULADO").toString().toUpperCase();
+    
+    // Si es de HOY y salió de la Venta del Día
+    if (fechaHC === fechaHoy && origenHC === "VENTA_DIA") {
+      var tipoHC = (rowHC[2] || "").toString().toUpperCase();
+      // Sumamos egresos y préstamos, pero no los traspasos internos
+      if (tipoHC.indexOf("EGRESO") !== -1 || tipoHC.indexOf("PRESTAMO") !== -1 || tipoHC.indexOf("GASTO") !== -1) {
+        var montoHC = limpiarNumero(rowHC[5]); // Columna F (MONTO)
+        totalVentaDiaUsado += montoHC;
+      }
+    }
+  }
 
   var tasaBCV = _r2(limpiarNumero(payload.tasaUSD || payload.tasaBCV || obtenerTasa(fechaOp, "BCV")));
   var tasaUSDT = _r2(limpiarNumero(payload.tasaUSDT || obtenerTasa(fechaOp, "USDT")));
@@ -1115,7 +1129,7 @@ function registrarCierreJornada(payload) {
         tasaBCV, tasaUSDT,
         comision > 0 ? "COMISIONES" : "VENTAS",
         "S", "ACUMULADO", idCierre,
-        tasaRefCierre, "BCV", equivBsPos
+        tasaBCV, "BCV", equivBsItem
       ]);
     }
 
@@ -1158,8 +1172,9 @@ function registrarCierreJornada(payload) {
   var gastos = _r2(limpiarNumero(payload.gastos || 0));
   var prestamos = _r2(limpiarNumero(payload.prestamos || 0));
 
-  var diferencia = _r2(ventaTotal - distribuido - comisiones - gastos - prestamos);
-  var descuadreBs = payload.descuadreBs !== undefined ? _r2(limpiarNumero(payload.descuadreBs)) : diferencia;
+  // Ahora el backend resta automáticamente lo que se usó de la Venta del Día
+  var diferencia = _r2(ventaTotal - distribuido - comisiones - totalVentaDiaUsado);
+  var descuadreBs = _r2(diferencia); // El backend impone su cálculo
   var estadoCierre = diferencia < 0 ? "FALTANTE" : "CERRADO";
 
   if (sheetCierres) {
@@ -1545,6 +1560,9 @@ function buscarGastos(params) {
 }
 
 function registrarOperacion(payload) {
+  var tasasReales = _resolverTasas(payload);
+  var tasaUSD = tasasReales.tasaUSD;
+  var tasaUSDT = tasasReales.tasaUSDT;
   var ss = obtenerSpreadsheet();
   var sheetHistorial = ss.getSheetByName("HISTORIAL");
   var sheetSaldos = ss.getSheetByName("SALDOS");
@@ -1579,14 +1597,43 @@ function registrarOperacion(payload) {
   var categoria = payload.categoria || "OPERATIVO";
   var tipoOperacion = payload.tipoOperacion || "EGRESO";
   var origenFondos = (payload.origenFondos || "ACUMULADO").toString().toUpperCase();
-  var tasaUSD = limpiarNumero(payload.tasaUSD || 0);
-  var tasaUSDT = limpiarNumero(payload.tasaUSDT || 0);
   var parteDelCierre = payload.parteDelCierre === true ? "S" : "N";
 
   // === NUEVO: flag informativo (no afecta saldo) ===
   var noAfectaSaldo = payload.noAfectaSaldo === true;
 
   if (montoTotal <= 0) return { status: "ERROR", mensaje: "Monto inválido." };
+    // === VALIDACIÓN ESTRICTA DE TRABAJADOR (FAIL-FAST) ===
+  var esPrestamoTrabajador = (categoria === "PRESTAMO_TRABAJADOR");
+  var filaTrabajadorIndex = -1;
+  var montoUSD = 0;
+  var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL");
+  var dataT = [];
+
+  if (esPrestamoTrabajador) {
+    if (!payload.cedula || payload.cedula.toString().trim() === "") {
+      return { status: "ERROR", mensaje: "Falta la cédula del trabajador. No se registró nada." };
+    }
+    var cedulaClean = payload.cedula.toString().replace(/[^0-9]/g, "");
+    if (cedulaClean === "") {
+      return { status: "ERROR", mensaje: "Cédula inválida. Debe contener números. No se registró nada." };
+    }
+    if (!sheetTrab) return { status: "ERROR", mensaje: "No existe hoja NOMINA_PERSONAL." };
+
+    dataT = sheetTrab.getDataRange().getValues();
+    for (var ti = 1; ti < dataT.length; ti++) {
+      var cedFila = (dataT[ti][2] || dataT[ti][0] || "").toString().replace(/[^0-9]/g, "");
+      if (cedFila === cedulaClean) {
+        filaTrabajadorIndex = ti;
+        break;
+      }
+    }
+    if (filaTrabajadorIndex === -1) {
+      return { status: "ERROR", mensaje: "Trabajador no encontrado con cédula " + cedulaClean + ". No se registró nada." };
+    }
+    montoUSD = tasaUSD > 0 ? montoTotal / tasaUSD : 0;
+  }
+  // === FIN VALIDACIÓN ===
 
   var fechaTx = new Date();
   if (payload.fechaOperacion && payload.fechaOperacion.toString().trim() !== "") {
@@ -1598,7 +1645,6 @@ function registrarOperacion(payload) {
 
   var cuentaComision = "";
   var comisionNativa = 0;
-
   if (payload.cuentasDesglose && payload.cuentasDesglose.length > 0) {
     var cuentasTxt = [];
     for (var k = 0; k < payload.cuentasDesglose.length; k++) {
@@ -1617,15 +1663,14 @@ function registrarOperacion(payload) {
         if (!noAfectaSaldo) {
           var saldoD = obtenerSaldoCuenta(sheetSaldos, ctaD);
           var requerido = montoNat + (k === 0 ? comisionNativa : 0);
+          
           if (saldoD < requerido) {
-            return {
-              status: "ERROR",
-              mensaje: "Fondos insuficientes en " + ctaD +
-                       ". Disponible: " + saldoD.toFixed(2) + " " + monedaNat +
-                       " | Requerido: " + requerido.toFixed(2) + " " + monedaNat
-            };
+            // AUTO-ASIGNACIÓN: Tomar el faltante de la Venta del Día
+            origenFondos = "VENTA_DIA"; 
+            actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, saldoD, false); // Deja la cuenta en 0
+          } else {
+            actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, montoNat, false);
           }
-          actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, montoNat, false);
         }
         cuentasTxt.push(ctaD + ": " + montoNat.toFixed(2) + " " + monedaNat);
       }
@@ -1640,30 +1685,20 @@ function registrarOperacion(payload) {
     // === NUEVO: mismo flag aplica a ruta sin desglose ===
     if (!noAfectaSaldo) {
       var saldoDisponible = obtenerSaldoCuenta(sheetSaldos, cuentaSalida);
-      if (saldoDisponible < montoTotal + comisionBs) {
-        return {
-          status: "ERROR",
-          mensaje: "Fondos insuficientes en " + cuentaSalida +
-                   ". Disponible: " + saldoDisponible.toFixed(2) +
-                   " | Requerido: " + (montoTotal + comisionBs).toFixed(2)
-        };
-      }
-      actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, montoTotal, false);
-      if (comisionBs > 0) {
-        actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, comisionBs, false);
+      var requeridoTotal = montoTotal + comisionBs;
+      
+      if (saldoDisponible < requeridoTotal) {
+        // AUTO-ASIGNACIÓN: Tomar el faltante de la Venta del Día
+        origenFondos = "VENTA_DIA";
+        actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, saldoDisponible, false); // Deja la cuenta en 0
+      } else {
+        actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, montoTotal, false);
+        if (comisionBs > 0) {
+          actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, comisionBs, false);
+        }
       }
     }
-  }
-
-  var montoFinal = montoTotal + comisionBs;
-  var notaComision = comisionBs > 0
-    ? " | " + montoTotal.toFixed(2) + " + comisión " + comisionBs.toFixed(2) + " (" + metodoPago + ")"
-    : "";
-
-  if (idempotenciaKey !== "") {
-    concepto = concepto + " | IDEMP:" + idempotenciaKey;
-  }
-
+  }  
   // === NUEVO: marcar en concepto si es informativo ===
   if (noAfectaSaldo) {
     concepto = concepto + " | [INFORMATIVO - no afecta saldo]";
@@ -1696,33 +1731,18 @@ function registrarOperacion(payload) {
     }
   }
 
-  // === SI ES PRÉSTAMO A TRABAJADOR: ACTUALIZAR DEUDA ===
-  if (categoria === "PRESTAMO_TRABAJADOR" && payload.cedula) {
-    try {
-      var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL");
-      if (sheetTrab) {
-        var cedulaClean = payload.cedula.toString().replace(/[^0-9]/g, "");
-        var dataT = sheetTrab.getDataRange().getValues();
-        var montoUSD = tasaUSD > 0 ? montoTotal / tasaUSD : 0;
-
-        for (var ti = 1; ti < dataT.length; ti++) {
-          var cedFila = (dataT[ti][2] || dataT[ti][0] || "").toString().replace(/[^0-9]/g, "");
-          if (cedFila === cedulaClean && cedulaClean !== "") {
-            var deudaActual = limpiarNumero(dataT[ti][9] || 0);
-            var nuevaDeuda = deudaActual + montoUSD;
-            sheetTrab.getRange(ti + 1, 10).setValue(nuevaDeuda);
-            return {
-              status: "SUCCESS", exito: true, idTx: idTx,
-              mensaje: "Préstamo registrado. Deuda nueva: $" + nuevaDeuda.toFixed(2),
-              deudaNueva: nuevaDeuda,
-              montoUSD: montoUSD
-            };
-          }
-        }
-      }
-    } catch (eTrab) {
-      Logger.log("Error actualizando deuda: " + eTrab);
-    }
+    // === ACTUALIZAR DEUDA (Ya validado arriba, es seguro) ===
+  if (esPrestamoTrabajador && filaTrabajadorIndex !== -1) {
+    var deudaActual = limpiarNumero(dataT[filaTrabajadorIndex][9] || 0);
+    var nuevaDeuda = deudaActual + montoUSD;
+    sheetTrab.getRange(filaTrabajadorIndex + 1, 10).setValue(nuevaDeuda);
+    
+    return {
+      status: "SUCCESS", exito: true, idTx: idTx,
+      mensaje: "Préstamo registrado. Deuda nueva: $" + nuevaDeuda.toFixed(2),
+      deudaNueva: nuevaDeuda,
+      montoUSD: montoUSD
+    };
   }
 
   return { status: "SUCCESS", exito: true, idTx: idTx, mensaje: "Egreso registrado correctamente" };
@@ -1802,26 +1822,14 @@ function registrarCompraDivisa(payload) {
 
   var fechaCdStr = Utilities.formatDate(fechaTx, "America/Caracas", "yyyy-MM-dd");
   var tasaRefCd = obtenerTasa(fechaCdStr, "USDT");
-  var tasaFinalCd = tasaUsada > 0 ? tasaUsada : tasaRefCd;
-  var fuenteFinalCd = tasaUsada > 0 ? "MANUAL" : "USDT";
+  var tasaFinalCd = tasa > 0 ? tasa : tasaRefCd;
+  var fuenteFinalCd = tasa > 0 ? "MANUAL" : "USDT";
 
   sheetHistorial.appendRow([
-    idTx,
-    fechaTx,
-    "COMPRA_DIVISA",
-    origen.cuentaId,
-    destino.cuentaId,
-    montoBs,          // MONTO = cuenta ORIGEN (montoBs)
-    origen.moneda,    // MONEDA = origen.moneda (NO hardcode)
-    montoBs,          // MONTO_BS
-    0,                // COMISION
-    concepto,         // CONCEPTO
-    tasa,             // TASA
-    fuenteTasa,       // FUENTE_TASA
-    "COMPRA_DIVISA",  // CATEGORIA
-    "ABIERTA",        // PARTE_DEL_CIERRE / ESTADO
-    "ACUMULADO",      // ORIGEN_FONDOS
-    ""                // ID_CIERRE
+    idTx, fechaTx, "COMPRA_DIVISA", origen.cuentaId, destino.cuentaId,
+    montoBs, origen.moneda, montoBs, 0, concepto,
+    0, 0, "COMPRA_DIVISA", "N", "ACUMULADO", "",
+    tasaFinalCd, fuenteFinalCd, montoBs
   ]);
 
   actualizarSaldoEnHojaSaldos(origen.cuentaId, -montoBs);
@@ -2073,9 +2081,7 @@ function registrarFaltante(payload) {
   var montoBs = limpiarNumero(payload.montoBs || 0);
   var cuentaOrigen = payload.cuentaOrigen || "Caja Efectivo Bs";
   var nota = payload.nota || "";
-  var tasaUSD = limpiarNumero(payload.tasaUSD || 0);
-  var tasaUSDT = limpiarNumero(payload.tasaUSDT || 0);
-
+ 
   if (montoBs <= 0) return { status: "ERROR", mensaje: "Monto inválido." };
 
   var fechaTx = new Date();
@@ -2105,13 +2111,13 @@ function registrarFaltante(payload) {
 
   var fechaFaStr = Utilities.formatDate(fechaTx, "America/Caracas", "yyyy-MM-dd");
   var tasaRefFa = obtenerTasa(fechaFaStr, "BCV");
-  var tasaFinalFa = (tasaUSD > 0) ? tasaUSD : tasaRefFa;
-  var fuenteFinalFa = (tasaUSD > 0) ? "MANUAL" : "BCV";
+  var tasaFinalFa = (limpiarNumero(payload.tasaUSD || 0) > 0) ? limpiarNumero(payload.tasaUSD) : tasaRefFa;
+  var fuenteFinalFa = (limpiarNumero(payload.tasaUSD || 0) > 0) ? "MANUAL" : "BCV";
 
   sheetHistorial.appendRow([
     idTx, fechaTx, "EGRESO", cuentaOrigen, "VARIAS",
     montoBs, "BS", montoBs, 0,
-    concepto, tasaUSD, tasaUSDT, "FALTANTE", "N", "ACUMULADO", "",
+    concepto, limpiarNumero(payload.tasaUSD || 0), limpiarNumero(payload.tasaUSDT || 0), "FALTANTE", "N", "ACUMULADO", "",
     tasaFinalFa, fuenteFinalFa, montoBs
   ]);
 
@@ -2604,386 +2610,7 @@ function onOpen() {
       }
     } catch (e) {}
   });
-}
-// ============================================================================
-// INGRESOS YA DECLARADOS DEL DÍA (marca S) — para restarlos del cierre
-// ============================================================================
-function obtenerIngresosDeclaradosDelDia(payload) {
-  var fecha = "";
-  if (payload) fecha = (payload.fecha || "").toString().trim();
-  if (fecha === "") {
-    fecha = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
-  }
-
-  var ss = obtenerSpreadsheet();
-  var sheet = ss.getSheetByName("HISTORIAL");
-  if (!sheet) {
-    return { status: "ERROR", fecha: fecha, totalBs: 0, items: [], cantidad: 0 };
-  }
-
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    return { status: "SUCCESS", fecha: fecha, totalBs: 0, items: [], cantidad: 0 };
-  }
-
-  var tz = "America/Caracas";
-  var data = sheet.getRange(2, 1, lastRow - 1, 16).getValues();
-  var totalBs = 0;
-  var items = [];
-  var totalPorCuenta = {};
-
-  for (var i = 0; i < data.length; i++) {
-    var row = data[i];
-    var idTx = row[0] ? row[0].toString().trim().toUpperCase() : "";
-    if (idTx.indexOf("TX-") !== 0) continue;
-
-    var f = "";
-    try {
-      var vf = row[1];
-      if (vf instanceof Date) f = Utilities.formatDate(vf, tz, "yyyy-MM-dd");
-      else f = vf.toString().substring(0, 10);
-    } catch (e) { continue; }
-
-    if (f !== fecha) continue;
-
-    var tipo = row[2] ? row[2].toString().toUpperCase() : "";
-    if (tipo.indexOf("INGRESO") === -1) continue;
-
-    var categoria = row[12] ? row[12].toString().toUpperCase() : "";
-    if (categoria !== "VENTA" && categoria !== "COBRO_CLIENTE") continue;
-
-    var marca = row[13] ? row[13].toString().trim().toUpperCase() : "";
-    if (marca !== "S") continue;
-
-    var monto = limpiarNumero(row[7]);
-    if (monto <= 0) monto = limpiarNumero(row[5]);
-    if (monto <= 0) continue;
-
-    var cuenta = row[4] ? row[4].toString() : "";
-    totalBs += monto;
-
-    if (cuenta !== "") {
-      var cuentaClean = cuenta.split(" | ")[0].split(":")[0].trim();
-      totalPorCuenta[cuentaClean] = (totalPorCuenta[cuentaClean] || 0) + monto;
-    }
-
-    items.push({
-      idTx: idTx,
-      cuenta: cuenta,
-      categoria: categoria,
-      concepto: row[9] ? row[9].toString() : "",
-      monto: monto
-    });
-  }
-
-  return {
-    status: "SUCCESS",
-    fecha: fecha,
-    totalBs: totalBs,
-    totalPorCuenta: totalPorCuenta,
-    items: items,
-    cantidad: items.length
-  };
-}// ============================================================================
-// REGISTRAR TRANSACCIÓN CENTRALIZADA
-// ============================================================================
-function registrarTransaccion(payload) {
-  var ss = obtenerSpreadsheet();
-  var sheetHistorial = ss.getSheetByName("HISTORIAL");
-  var sheetSaldos = ss.getSheetByName("SALDOS");
-  if (!sheetHistorial || !sheetSaldos) {
-    return { status: "ERROR", mensaje: "Faltan hojas requeridas (HISTORIAL o SALDOS)" };
-  }
-
-  var origen = (payload.origen || payload.cuentaOrigen || payload.cuentaSalida || "Caja Efectivo Bs").toString().trim();
-  var destino = (payload.destino || payload.cuentaDestino || "VARIAS").toString().trim();
-  var monto = limpiarNumero(payload.monto !== undefined ? payload.monto : (payload.montoBs || payload.montoBsPagado || 0));
-  var moneda = (payload.moneda || "BS").toString().toUpperCase();
-  var tasa = limpiarNumero(payload.tasa !== undefined ? payload.tasa : (payload.tasaUSD || payload.tasaBCV || 0));
-  var tipoMovimiento = (payload.tipo_movimiento || payload.tipoMovimiento || payload.tipoOperacion || "GASTO").toString().toUpperCase().trim();
-
-  var comision = limpiarNumero(payload.comision !== undefined ? payload.comision : (payload.comisionBs || 0));
-  var concepto = (payload.concepto || "").toString().trim();
-  var categoria = (payload.categoria || "").toString().trim();
-  var idempotenciaKey = (payload.idempotenciaKey || "").toString().trim();
-  var origenFondos = (payload.origenFondos || "ACUMULADO").toString().toUpperCase();
-
-  if (monto <= 0) return { status: "ERROR", mensaje: "Monto inválido." };
-
-  if (idempotenciaKey !== "") {
-    var histCheck = sheetHistorial.getDataRange().getValues();
-    var inicioBusqueda = histCheck.length > 100 ? histCheck.length - 100 : 1;
-    for (var hi = inicioBusqueda; hi < histCheck.length; hi++) {
-      var conceptoFila = histCheck[hi][9] ? histCheck[hi][9].toString() : "";
-      if (conceptoFila.indexOf("IDEMP:" + idempotenciaKey) !== -1) {
-        return {
-          status: "SUCCESS", exito: true,
-          idTx: histCheck[hi][0].toString(),
-          mensaje: "Transacción ya registrada (idempotencia)",
-          duplicado: true
-        };
-      }
-    }
-  }
-
-  var fechaTx = new Date();
-  if (payload.fechaOperacion && payload.fechaOperacion.toString().trim() !== "") {
-    try {
-      var fp = new Date(payload.fechaOperacion + "T12:00:00");
-      if (!isNaN(fp.getTime())) fechaTx = fp;
-    } catch (e) {}
-  }
-
-  var idTx = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
-
-  var fechaTxStr = Utilities.formatDate(fechaTx, "America/Caracas", "yyyy-MM-dd");
-  var fuenteBuscadaTx = (payload.fuenteTasa || payload.fuente || "BCV").toString().toUpperCase();
-  var tasaRefTx = obtenerTasa(fechaTxStr, fuenteBuscadaTx);
-  var tasaFinalTx = (tasa > 0) ? tasa : tasaRefTx;
-  var fuenteFinalTx = (tasa > 0) ? "MANUAL" : fuenteBuscadaTx;
-  var totalBsTx = (moneda === "USD" || moneda === "USDT") ? (monto + comision) * tasaFinalTx : (monto + comision);
-
-  if (tipoMovimiento === "PRESTAMO" || tipoMovimiento === "PRESTAMO_TRABAJADOR") {
-    var cedula = (payload.cedula || "").toString().trim();
-    if (cedula === "") return { status: "ERROR", mensaje: "Cédula obligatoria para préstamos." };
-    if (tasa <= 0) return { status: "ERROR", mensaje: "Tasa inválida para préstamo." };
-
-    var totalDebito = monto + comision;
-    var saldoDisponible = obtenerSaldoCuenta(sheetSaldos, origen);
-    if (saldoDisponible < totalDebito) {
-      return {
-        status: "ERROR",
-        mensaje: "Fondos insuficientes en " + origen + ". Disponible: " + saldoDisponible.toFixed(2)
-      };
-    }
-
-    var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL") ||
-                    ss.getSheetByName("TRABAJADORES") ||
-                    ss.getSheetByName("PERSONAL");
-    if (!sheetTrab) return { status: "ERROR", mensaje: "No existe hoja de Trabajadores." };
-
-    var cedulaClean = cedula.replace(/[^0-9]/g, "");
-    var dataT = sheetTrab.getDataRange().getValues();
-    var filaTrab = -1;
-    var deudaActual = 0.0;
-    var nombreTrab = (payload.nombre || "").toString().trim();
-
-    for (var i = 1; i < dataT.length; i++) {
-      var cedFila = (dataT[i][2] || dataT[i][0] || "").toString().replace(/[^0-9]/g, "");
-      if (cedFila === cedulaClean && cedulaClean !== "") {
-        filaTrab = i + 1;
-        deudaActual = limpiarNumero(dataT[i][9] || 0);
-        if (nombreTrab === "") nombreTrab = dataT[i][1] ? dataT[i][1].toString() : "";
-        break;
-      }
-    }
-
-    if (filaTrab === -1) {
-      return { status: "ERROR", mensaje: "Trabajador no encontrado con cédula: " + cedula };
-    }
-
-    var montoUSD = monto / tasa;
-    var nuevaDeuda = deudaActual + montoUSD;
-
-    actualizarSaldoEnHojaSaldos(sheetSaldos, origen, totalDebito, false);
-    sheetTrab.getRange(filaTrab, 10).setValue(nuevaDeuda);
-
-    var conceptoTx = concepto || ("PRÉSTAMO A TRABAJADOR - " + nombreTrab + " (V-" + cedula + ") | $" + montoUSD.toFixed(2) + " @ " + tasa.toFixed(2));
-    if (idempotenciaKey !== "") conceptoTx += " | IDEMP:" + idempotenciaKey;
-
-    sheetHistorial.appendRow([
-      idTx, fechaTx, "PRESTAMO", origen, destino !== "VARIAS" ? destino : "PERSONAL",
-      totalDebito, moneda, monto, comision,
-      conceptoTx,
-      tasa, 0, "PRESTAMO_TRABAJADOR", "S", origenFondos, "",
-      tasaFinalTx, fuenteFinalTx, totalBsTx
-    ]);
-
-    return {
-      status: "SUCCESS", exito: true, idTx: idTx,
-      montoUSD: montoUSD, deudaAnterior: deudaActual, deudaNueva: nuevaDeuda,
-      mensaje: "Préstamo registrado correctamente. Deuda actualizada: $" + nuevaDeuda.toFixed(2)
-    };
-
-  } else if (tipoMovimiento === "GASTO" || tipoMovimiento === "EGRESO") {
-    var totalGasto = monto + comision;
-    var saldoDispGasto = obtenerSaldoCuenta(sheetSaldos, origen);
-    if (saldoDispGasto < totalGasto) {
-      return {
-        status: "ERROR",
-        mensaje: "Fondos insuficientes en " + origen + ". Disponible: " + saldoDispGasto.toFixed(2)
-      };
-    }
-
-    actualizarSaldoEnHojaSaldos(sheetSaldos, origen, totalGasto, false);
-
-    var conceptoGasto = concepto || categoria || "Gasto";
-    if (idempotenciaKey !== "") conceptoGasto += " | IDEMP:" + idempotenciaKey;
-
-    sheetHistorial.appendRow([
-      idTx, fechaTx, "EGRESO", origen, destino,
-      totalGasto, moneda, monto, comision,
-      conceptoGasto,
-      tasa, 0, categoria || "OPERATIVO", "N", origenFondos, "",
-      tasaFinalTx, fuenteFinalTx, totalBsTx
-    ]);
-
-    return { status: "SUCCESS", exito: true, idTx: idTx, mensaje: "Gasto registrado correctamente" };
-
-  } else {
-    var conceptoOtros = concepto || tipoMovimiento;
-    if (idempotenciaKey !== "") conceptoOtros += " | IDEMP:" + idempotenciaKey;
-
-    if (tipoMovimiento === "INGRESO") {
-      actualizarSaldoEnHojaSaldos(sheetSaldos, destino !== "VARIAS" ? destino : origen, monto, true);
-      sheetHistorial.appendRow([
-        idTx, fechaTx, "INGRESO", origen, destino,
-        monto, moneda, monto, comision,
-        conceptoOtros,
-        tasa, 0, categoria || "VENTA", "S", origenFondos, "",
-        tasaFinalTx, fuenteFinalTx, totalBsTx
-      ]);
-    } else {
-      actualizarSaldoEnHojaSaldos(sheetSaldos, origen, monto + comision, false);
-      sheetHistorial.appendRow([
-        idTx, fechaTx, tipoMovimiento, origen, destino,
-        monto + comision, moneda, monto, comision,
-        conceptoOtros,
-        tasa, 0, categoria || "GENERAL", "N", origenFondos, "",
-        tasaFinalTx, fuenteFinalTx, totalBsTx
-      ]);
-    }
-
-    return { status: "SUCCESS", exito: true, idTx: idTx, mensaje: "Transacción registrada correctamente" };
-  }
-}
-
-// ============================================================================
-// PRÉSTAMO A TRABAJADOR — resta de cuenta + suma deuda en NOMINA_PERSONAL
-// ============================================================================
-function registrarPrestamoTrabajador(payload) {
-  var p = payload || {};
-  p.tipo_movimiento = "PRESTAMO";
-  return registrarTransaccion(p);
-}
-// ============================================================================
-// MOVIMIENTOS DEL DÍA — para jalar al cierre
-// ============================================================================
-function obtenerMovimientosDelDia(payload) {
-  var fecha = "";
-  if (payload) fecha = (payload.fecha || "").toString().trim();
-  if (fecha === "") {
-    fecha = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
-  }
-
-  var ss = obtenerSpreadsheet();
-  var sheet = ss.getSheetByName("HISTORIAL");
-  if (!sheet) return { status: "ERROR", movimientos: [] };
-
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return { status: "SUCCESS", fecha: fecha, movimientos: [] };
-
-  var tz = "America/Caracas";
-  var data = sheet.getRange(2, 1, lastRow - 1, 16).getValues();
-  var movimientos = [];
-
-  for (var i = 0; i < data.length; i++) {
-    var row = data[i];
-    var idTx = row[0] ? row[0].toString().trim().toUpperCase() : "";
-    if (idTx.indexOf("TX-") !== 0) continue;
-
-    var f = "";
-    try {
-      var vf = row[1];
-      if (vf instanceof Date) f = Utilities.formatDate(vf, tz, "yyyy-MM-dd");
-      else f = vf.toString().substring(0, 10);
-    } catch (e) { continue; }
-
-    if (f !== fecha) continue;
-
-    var tipo = row[2] ? row[2].toString().toUpperCase() : "";
-    var esEgreso = tipo.indexOf("EGRESO") === 0 ||
-                   tipo.indexOf("CARGO_FIJO") === 0 ||
-                   tipo.indexOf("PAGO_NOMINA") === 0 ||
-                   tipo.indexOf("LIQUIDACION") === 0 ||
-                   tipo.indexOf("PRESTAMO") === 0 ||
-                   tipo.indexOf("FALTANTE") === 0;
-    var esTraspaso = tipo.indexOf("TRASPASO") === 0;
-
-    if (!esEgreso && !esTraspaso) continue;
-
-    // Si ya tiene marca S, ya fue parte del cierre → no mostrar
-    var marca = row[13] ? row[13].toString().trim().toUpperCase() : "";
-    if (marca === "S") continue;
-
-        movimientos.push({
-      idTx: idTx,
-      tipo: tipo,
-      origen: row[3] ? row[3].toString() : "",
-      destino: row[4] ? row[4].toString() : "",
-      monto: limpiarNumero(row[5]),
-      montoNeto: limpiarNumero(row[7]),
-      comision: limpiarNumero(row[8]),
-      concepto: row[9] ? row[9].toString() : "",
-      categoria: row[12] ? row[12].toString() : "",
-      marcaCierre: row[13] ? row[13].toString().toUpperCase() : "",
-      origenFondos: row[14] ? row[14].toString().toUpperCase() : "ACUMULADO",
-      esTraspaso: esTraspaso
-    });
-  }
-
-  return {
-    status: "SUCCESS",
-    fecha: fecha,
-    movimientos: movimientos,
-    cantidad: movimientos.length
-  };
-}// ============================================================================
-// DASHBOARD — Lee métricas de la hoja DASHBOARD
-// ============================================================================
-function obtenerDashboard(payload) {
-  var ss = obtenerSpreadsheet();
-  var sheet = ss.getSheetByName("DASHBOARD");
-  if (!sheet) return { status: "ERROR", mensaje: "No existe hoja DASHBOARD" };
-
-  var desde = "";
-  var hasta = "";
-  if (payload) {
-    desde = (payload.fechaDesde || "").toString().trim();
-    hasta = (payload.fechaHasta || "").toString().trim();
-  }
-  if (desde === "" || hasta === "") {
-    var hoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
-    if (desde === "") desde = hoy;
-    if (hasta === "") hasta = hoy;
-  }
-
-  sheet.getRange("A2").setValue(desde);
-  sheet.getRange("B2").setValue(hasta);
-
-  SpreadsheetApp.flush();
-
-  var valores = sheet.getRange("B5:B15").getValues();
-  return {
-    status: "SUCCESS",
-    fechaDesde: desde,
-    fechaHasta: hasta,
-    ventas: Number(valores[0][0]) || 0,
-    comisiones: Number(valores[1][0]) || 0,
-    ventasNetas: Number(valores[2][0]) || 0,
-    egresosOperativos: Number(valores[3][0]) || 0,
-    personal: Number(valores[4][0]) || 0,
-    nomina: Number(valores[5][0]) || 0,
-    totalEgresos: Number(valores[6][0]) || 0,
-    cajaRango: Number(valores[7][0]) || 0,
-    pendientesVencen: Number(valores[8][0]) || 0,
-    gananciaReal: Number(valores[9][0]) || 0,
-    margen: Number(valores[10][0]) || 0
-  };
-}// ============================================================================
-// ESTADÍSTICAS — resumen por rango con comparativo
-// ============================================================================
-function obtenerEstadisticas(payload) {
+}function obtenerEstadisticas(payload) {
   var desde = "";
   var hasta = "";
   if (payload) {
@@ -3040,22 +2667,10 @@ function _calcularEstadisticasRango(desde, hasta) {
   var ss = obtenerSpreadsheet();
   var sheetHist = ss.getSheetByName("HISTORIAL");
   var resultado = {
-    ventas: 0,
-    comisiones: 0,
-    ventasNetas: 0,
-    egresosOperativos: 0,
-    personal: 0,
-    nomina: 0,
-    proveedores: 0,
-    servicios: 0,
-    comprasDivisa: 0,
-    faltantes: 0,
-    otros: 0,
-    totalEgresos: 0,
-    caja: 0,
-    ganancia: 0,
-    margen: 0,
-    movimientos: 0
+    ventas: 0, comisiones: 0, ventasNetas: 0, egresosOperativos: 0,
+    personal: 0, nomina: 0, proveedores: 0, servicios: 0,
+    comprasDivisa: 0, faltantes: 0, otros: 0, totalEgresos: 0,
+    caja: 0, ganancia: 0, margen: 0, movimientos: 0
   };
   if (!sheetHist) return resultado;
 
@@ -3125,14 +2740,11 @@ function _calcularEstadisticasRango(desde, hasta) {
   resultado.ventasNetas = resultado.ventas - resultado.comisiones;
   resultado.caja = resultado.ventasNetas - resultado.totalEgresos;
   resultado.ganancia = resultado.caja;
-  resultado.margen = resultado.ventasNetas > 0
-    ? (resultado.ganancia / resultado.ventasNetas) * 100
-    : 0;
+  resultado.margen = resultado.ventasNetas > 0 ? (resultado.ganancia / resultado.ventasNetas) * 100 : 0;
 
   return resultado;
-}// ============================================================================
-// DETALLE POR CATEGORÍA — lista de movimientos de una categoría
-// ============================================================================
+}
+
 function obtenerDetallePorCategoria(payload) {
   var desde = "";
   var hasta = "";
@@ -3194,31 +2806,22 @@ function obtenerDetallePorCategoria(payload) {
 
     total += neto;
     lista.push({
-      idTx: idTx,
-      fecha: f,
-      tipo: tipo,
+      idTx: idTx, fecha: f, tipo: tipo,
       origen: row[3] ? row[3].toString() : "",
       destino: row[4] ? row[4].toString() : "",
       concepto: row[9] ? row[9].toString() : "",
-      monto: monto,
-      montoNeto: montoNeto,
-      comision: comision,
+      monto: monto, montoNeto: montoNeto, comision: comision,
       categoria: categoria
     });
   }
 
   return {
-    status: "SUCCESS",
-    categoria: categoriaBuscada,
-    fechaDesde: desde,
-    fechaHasta: hasta,
-    movimientos: lista,
-    total: total,
-    cantidad: lista.length
+    status: "SUCCESS", categoria: categoriaBuscada,
+    fechaDesde: desde, fechaHasta: hasta,
+    movimientos: lista, total: total, cantidad: lista.length
   };
-}// ============================================================================
-// DETALLE DE UN CIERRE — filas vinculadas por ID_SESION_CIERRE
-// ============================================================================
+}
+
 function obtenerDetalleCierre(payload) {
   var idCierre = "";
   var fechaCierre = "";
@@ -3275,22 +2878,11 @@ function obtenerDetalleCierre(payload) {
       distribucion.push({ cuenta: cuenta, metodo: "PM", monto: monto, montoNeto: montoNeto, comision: 0, concepto: concepto });
     } else if (tipo.indexOf("INGRESO") === 0 && marca === "S") {
       distribucion.push({ cuenta: cuenta, metodo: "VENTA_DIA", monto: monto, montoNeto: montoNeto, comision: 0, concepto: concepto });
-    } else if (tipo.indexOf("EGRESO") === 0 ||
-               tipo.indexOf("PAGO_NOMINA") === 0 ||
-               tipo.indexOf("LIQUIDACION") === 0 ||
-               tipo.indexOf("PRESTAMO") === 0 ||
-               tipo.indexOf("TRASPASO") === 0 ||
-               tipo.indexOf("FALTANTE") === 0) {
+    } else if (tipo.indexOf("EGRESO") === 0 || tipo.indexOf("PAGO_NOMINA") === 0 || tipo.indexOf("LIQUIDACION") === 0 || tipo.indexOf("PRESTAMO") === 0 || tipo.indexOf("TRASPASO") === 0 || tipo.indexOf("FALTANTE") === 0) {
       var item = {
-        idTx: idTx,
-        tipo: tipo,
-        cuenta: cuenta,
-        monto: monto,
-        montoNeto: montoNeto,
-        comision: comision,
-        concepto: concepto,
-        categoria: categoria,
-        origenFondos: origenFondos
+        idTx: idTx, tipo: tipo, cuenta: cuenta, monto: monto,
+        montoNeto: montoNeto, comision: comision, concepto: concepto,
+        categoria: categoria, origenFondos: origenFondos
       };
       if (origenFondos === "VENTA_DIA") {
         gastosVenta.push(item);
@@ -3300,7 +2892,6 @@ function obtenerDetalleCierre(payload) {
     }
   }
 
-  // Agrupar distribución por cuenta
   var distribucionPorCuenta = {};
   var totalDistribucion = 0;
   for (var d = 0; d < distribucion.length; d++) {
@@ -3310,23 +2901,15 @@ function obtenerDetalleCierre(payload) {
       distribucionPorCuenta[cta] = { cuenta: cta, pos: 0, pm: 0, total: 0, items: [] };
     }
     var neto = itD.montoNeto > 0 ? itD.montoNeto : itD.monto;
-    if (itD.metodo === "POS") {
-      distribucionPorCuenta[cta].pos += neto;
-    } else if (itD.metodo === "PM") {
-      distribucionPorCuenta[cta].pm += neto;
-    } else {
-      distribucionPorCuenta[cta].pos += neto;
-    }
+    if (itD.metodo === "POS") distribucionPorCuenta[cta].pos += neto;
+    else if (itD.metodo === "PM") distribucionPorCuenta[cta].pm += neto;
+    else distribucionPorCuenta[cta].pos += neto;
+
     distribucionPorCuenta[cta].total += neto;
-    distribucionPorCuenta[cta].items.push({
-      metodo: itD.metodo,
-      monto: neto,
-      concepto: itD.concepto || ""
-    });
+    distribucionPorCuenta[cta].items.push({ metodo: itD.metodo, monto: neto, concepto: itD.concepto || "" });
     totalDistribucion += neto;
   }
 
-  // Agrupar gastos venta por categoría
   var gastosVentaPorCat = {};
   var totalGastosVenta = 0;
   for (var gv = 0; gv < gastosVenta.length; gv++) {
@@ -3339,7 +2922,6 @@ function obtenerDetalleCierre(payload) {
     totalGastosVenta += montoGasto;
   }
 
-  // Agrupar gastos acumulados por categoría
   var gastosAcumPorCat = {};
   var totalGastosAcum = 0;
   for (var ga = 0; ga < gastosAcumulado.length; ga++) {
@@ -3359,7 +2941,6 @@ function obtenerDetalleCierre(payload) {
   var arrGastosAcum = [];
   for (var k3 in gastosAcumPorCat) arrGastosAcum.push(gastosAcumPorCat[k3]);
 
-  // Obtener pendientes por pagar
   var pendientes = [];
   var totalPendientes = 0;
   var sheetCP = ss.getSheetByName("CUENTAS_PENDIENTES");
@@ -3372,18 +2953,12 @@ function obtenerDetalleCierre(payload) {
         if (estadoP !== "PENDIENTE") continue;
         var montoP = limpiarNumero(dataCP[p][6]);
         var monedaP = dataCP[p][7] ? dataCP[p][7].toString().toUpperCase() : "BS";
-        pendientes.push({
-          tercero: dataCP[p][4] ? dataCP[p][4].toString() : "",
-          concepto: dataCP[p][5] ? dataCP[p][5].toString() : "",
-          monto: montoP,
-          moneda: monedaP
-        });
+        pendientes.push({ tercero: dataCP[p][4] ? dataCP[p][4].toString() : "", concepto: dataCP[p][5] ? dataCP[p][5].toString() : "", monto: montoP, moneda: monedaP });
         if (monedaP === "BS") totalPendientes += montoP;
       }
     }
   }
 
-  // Leer datos del cierre (venta total y descuadre) desde HISTORIAL_CIERRES
   var ventaTotal = ventaTotalPayload;
   var descuadreCierre = descuadrePayload;
   var tasaBCV = tasaBCVPayload;
@@ -3402,9 +2977,8 @@ function obtenerDetalleCierre(payload) {
           tasaUSDT = limpiarNumero(dataC[c2][11]);
           try {
             var vfh = dataC[c2][1];
-            if (vfh instanceof Date) {
-              horaCierre = Utilities.formatDate(vfh, tz, "HH:mm");
-            } else {
+            if (vfh instanceof Date) horaCierre = Utilities.formatDate(vfh, tz, "HH:mm");
+            else {
               var matchH = vfh.toString().match(/(\d{1,2}):(\d{2})/);
               if (matchH) horaCierre = matchH[0];
             }
@@ -3414,27 +2988,15 @@ function obtenerDetalleCierre(payload) {
       }
     }
   }
+  
   return {
-    status: "SUCCESS",
-    idCierre: idCierre,
-    distribucion: arrDistribucion,
-    gastosVenta: arrGastosVenta,
-    gastosAcumulado: arrGastosAcum,
-    totalDistribucion: totalDistribucion,
-    totalGastosVenta: totalGastosVenta,
-    totalGastosAcumulado: totalGastosAcum,
-    ventaTotal: ventaTotal,
-    descuadreCierre: descuadreCierre,
-    tasaBCV: tasaBCV,
-    tasaUSDT: tasaUSDT,
-    horaCierre: horaCierre,
-    pendientes: pendientes,
-    totalPendientes: totalPendientes
+    status: "SUCCESS", idCierre: idCierre, distribucion: arrDistribucion, gastosVenta: arrGastosVenta, gastosAcumulado: arrGastosAcum,
+    totalDistribucion: totalDistribucion, totalGastosVenta: totalGastosVenta, totalGastosAcumulado: totalGastosAcum,
+    ventaTotal: ventaTotal, descuadreCierre: descuadreCierre, tasaBCV: tasaBCV, tasaUSDT: tasaUSDT, horaCierre: horaCierre,
+    pendientes: pendientes, totalPendientes: totalPendientes
   };
 }
-// ============================================================================
-// NORMALIZAR FECHA — acepta Date, "2026-10-03", "3/10/2026", "03/10/2026"
-// ============================================================================
+
 function _normalizarFecha(valor, tz) {
   if (!valor) return "";
   if (valor instanceof Date) {
@@ -3442,35 +3004,23 @@ function _normalizarFecha(valor, tz) {
   }
   var str = valor.toString().trim();
   if (str === "") return "";
-
-  // Caso "2026-10-03..." (ISO)
-  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
-    return str.substring(0, 10);
-  }
-
-  // Caso "3/10/2026" o "03/10/2026" (formato español)
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.substring(0, 10);
   var partesFecha = str.split(' ')[0];
   if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(partesFecha)) {
     var p = partesFecha.split('/');
     var dd = p[0].length === 1 ? '0' + p[0] : p[0];
     var mm = p[1].length === 1 ? '0' + p[1] : p[1];
-    var yyyy = p[2];
-    return yyyy + '-' + mm + '-' + dd;
+    return p[2] + '-' + mm + '-' + dd;
   }
-
-  // Caso "10/3/2026" (formato inglés M/D/YYYY)
   if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(partesFecha)) {
     var p2 = partesFecha.split('/');
     var mm2 = p2[0].length === 1 ? '0' + p2[0] : p2[0];
     var dd2 = p2[1].length === 1 ? '0' + p2[1] : p2[1];
-    var yyyy2 = p2[2];
-    return yyyy2 + '-' + mm2 + '-' + dd2;
+    return p2[2] + '-' + mm2 + '-' + dd2;
   }
-
   return str.substring(0, 10);
-}// ============================================================================
-// CIERRES DEL RANGO — lista de cierres con resumen
-// ============================================================================
+}
+
 function obtenerCierresDelRango(payload) {
   var desde = "";
   var hasta = "";
@@ -3480,8 +3030,7 @@ function obtenerCierresDelRango(payload) {
   }
   if (desde === "" || hasta === "") {
     var hoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
-    desde = hoy;
-    hasta = hoy;
+    desde = hoy; hasta = hoy;
   }
 
   var ss = obtenerSpreadsheet();
@@ -3510,34 +3059,19 @@ function obtenerCierresDelRango(payload) {
     if (f < desde || f > hasta) continue;
 
     cierres.push({
-      idCierre: idCierre,
-      fecha: f,
-      montoVentaUSD: limpiarNumero(row[2]),
-      ventaEsperadaBs: limpiarNumero(row[3]),
-      ventaUSDT: limpiarNumero(row[4]),
-      totalEquivalenteBs: limpiarNumero(row[5]),
-      totalCobradoUSD: limpiarNumero(row[6]),
-      descuadreBs: limpiarNumero(row[7]),
-      estado: row[8] ? row[8].toString() : "CERRADO",
-      observacion: row[9] ? row[9].toString() : "",
-      tasaUSD: limpiarNumero(row[10]),
-      tasaUSDT: limpiarNumero(row[11])
+      idCierre: idCierre, fecha: f,
+      montoVentaUSD: limpiarNumero(row[2]), ventaEsperadaBs: limpiarNumero(row[3]),
+      ventaUSDT: limpiarNumero(row[4]), totalEquivalenteBs: limpiarNumero(row[5]),
+      totalCobradoUSD: limpiarNumero(row[6]), descuadreBs: limpiarNumero(row[7]),
+      estado: row[8] ? row[8].toString() : "CERRADO", observacion: row[9] ? row[9].toString() : "",
+      tasaUSD: limpiarNumero(row[10]), tasaUSDT: limpiarNumero(row[11])
     });
   }
 
   cierres.reverse();
-
-  return {
-    status: "SUCCESS",
-    fechaDesde: desde,
-    fechaHasta: hasta,
-    cierres: cierres,
-    cantidad: cierres.length
-  };
+  return { status: "SUCCESS", fechaDesde: desde, fechaHasta: hasta, cierres: cierres, cantidad: cierres.length };
 }
-// ============================================================================
-// HISTORIAL DE PRÉSTAMOS POR TRABAJADOR
-// ============================================================================
+
 function obtenerHistorialPrestamos(payload) {
   var cedula = "";
   if (payload) cedula = (payload.cedula || "").toString().trim();
@@ -3570,20 +3104,12 @@ function obtenerHistorialPrestamos(payload) {
     var monto = limpiarNumero(row[5]);
     var montoNeto = limpiarNumero(row[7]);
 
-    historial.push({
-      idTx: idTx,
-      fecha: f,
-      monto: montoNeto > 0 ? montoNeto : monto,
-      concepto: concepto
-    });
+    historial.push({ idTx: idTx, fecha: f, monto: montoNeto > 0 ? montoNeto : monto, concepto: concepto });
   }
 
   historial.reverse();
-
   var deudaActual = 0;
-  var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL") ||
-                  ss.getSheetByName("TRABAJADORES") ||
-                  ss.getSheetByName("PERSONAL");
+  var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL") || ss.getSheetByName("TRABAJADORES") || ss.getSheetByName("PERSONAL");
   if (sheetTrab) {
     var dataT = sheetTrab.getDataRange().getValues();
     for (var j = 1; j < dataT.length; j++) {
@@ -3595,46 +3121,29 @@ function obtenerHistorialPrestamos(payload) {
     }
   }
 
-  return {
-    status: "SUCCESS",
-    cedula: cedula,
-    historial: historial,
-    deudaActual: deudaActual,
-    cantidad: historial.length
-  };
-}// ============================================================================
-// MIGRACIÓN — Crear préstamos históricos para deudas previas
-// ============================================================================
+  return { status: "SUCCESS", cedula: cedula, historial: historial, deudaActual: deudaActual, cantidad: historial.length };
+}
+
 function migrarDeudasHistoricas() {
   Logger.log('=== INICIO MIGRACION ===');
   var ss = obtenerSpreadsheet();
   var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL");
   var sheetHist = ss.getSheetByName("HISTORIAL");
-  
-  if (!sheetTrab) { Logger.log('NO EXISTE NOMINA_PERSONAL'); return; }
-  if (!sheetHist) { Logger.log('NO EXISTE HISTORIAL'); return; }
+  if (!sheetTrab || !sheetHist) return;
 
-  // 1) Leer trabajadores
   var lastT = sheetTrab.getLastRow();
-  if (lastT < 2) { Logger.log('Sin trabajadores'); return; }
+  if (lastT < 2) return;
   var dataT = sheetTrab.getRange(2, 1, lastT - 1, 13).getValues();
   
   var trabajadores = [];
   for (var i = 0; i < dataT.length; i++) {
     var cedula = (dataT[i][2] || "").toString().replace(/[^0-9]/g, "");
-    var nombre = dataT[i][1] ? dataT[i][1].toString().trim() : "";
     var deudaActual = limpiarNumero(dataT[i][9] || 0);
-    if (cedula === "" || deudaActual <= 0) continue;
-    trabajadores.push({
-      fila: i + 2,
-      cedula: cedula,
-      nombre: nombre,
-      deudaActual: deudaActual
-    });
+    if (cedula !== "" && deudaActual > 0) {
+      trabajadores.push({ cedula: cedula, nombre: dataT[i][1] ? dataT[i][1].toString().trim() : "", deudaActual: deudaActual });
+    }
   }
-  Logger.log('Trabajadores con deuda: ' + trabajadores.length);
 
-  // 2) Sumar prestamos en HISTORIAL por cedula
   var lastH = sheetHist.getLastRow();
   var sumaPorCedula = {};
   if (lastH >= 2) {
@@ -3642,391 +3151,66 @@ function migrarDeudasHistoricas() {
     for (var j = 0; j < dataH.length; j++) {
       var cat = dataH[j][12] ? dataH[j][12].toString().toUpperCase() : "";
       if (cat !== "PRESTAMO_TRABAJADOR") continue;
-      var conceptoTx = dataH[j][9] ? dataH[j][9].toString() : "";
-      // Extraer cedula del concepto
-      var matchCed = conceptoTx.match(/\(V-?(\d+)\)|V-?(\d+)/);
+      var matchCed = dataH[j][9] ? dataH[j][9].toString().match(/\(V-?(\d+)\)|V-?(\d+)/) : null;
       if (!matchCed) continue;
       var cedConc = (matchCed[1] || matchCed[2] || "").replace(/[^0-9]/g, "");
       if (cedConc === "") continue;
       var montoBs = limpiarNumero(dataH[j][7] || dataH[j][5] || 0);
       var tasa = limpiarNumero(dataH[j][10] || 1);
-      var montoUSD = tasa > 0 ? montoBs / tasa : 0;
       if (!sumaPorCedula[cedConc]) sumaPorCedula[cedConc] = 0;
-      sumaPorCedula[cedConc] += montoUSD;
+      sumaPorCedula[cedConc] += (tasa > 0 ? montoBs / tasa : 0);
     }
   }
-  Logger.log('Cedulas con prestamos en HISTORIAL: ' + Object.keys(sumaPorCedula).length);
 
-  // 3) Armar filas para migrar
   var hoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
   var tasaDefault = 871.37;
-  try {
-    var cfg = obtenerTasasConfig();
-    if (cfg && cfg.tasaUSD) tasaDefault = cfg.tasaUSD;
-  } catch (e) {}
+  var cfg = obtenerTasasConfig();
+  if (cfg && cfg.tasaUSD) tasaDefault = cfg.tasaUSD;
 
   var filasMigrar = [];
   for (var k = 0; k < trabajadores.length; k++) {
     var t = trabajadores[k];
-    var yaRegistrado = sumaPorCedula[t.cedula] || 0;
-    var deudaPrevia = t.deudaActual - yaRegistrado;
-    deudaPrevia = Math.round(deudaPrevia * 100) / 100; // redondear
-
-    Logger.log(t.nombre + ' (V-' + t.cedula + '): Deuda=' + t.deudaActual.toFixed(2) + 
-               ' | En HISTORIAL=' + yaRegistrado.toFixed(2) + 
-               ' | Diferencia=' + deudaPrevia.toFixed(2));
-
+    var deudaPrevia = Math.round((t.deudaActual - (sumaPorCedula[t.cedula] || 0)) * 100) / 100;
     if (deudaPrevia < 0.01) continue;
-
-    var montoBs = deudaPrevia * tasaDefault;
-    var idTx = "TX-HIST-" + t.cedula + "-" + Date.now();
-    var concepto = "PRESTAMO HISTORICO - " + t.nombre + " (V-" + t.cedula + ") | $" + deudaPrevia.toFixed(2);
-
+    
     filasMigrar.push([
-      idTx, hoy, "EGRESO", "PERSONAL", "VARIAS",
-      montoBs, "BS", montoBs, 0,
-      concepto,
+      "TX-HIST-" + t.cedula + "-" + Date.now(), hoy, "EGRESO", "PERSONAL", "VARIAS",
+      (deudaPrevia * tasaDefault), "BS", (deudaPrevia * tasaDefault), 0,
+      "PRESTAMO HISTORICO - " + t.nombre + " (V-" + t.cedula + ") | $" + deudaPrevia.toFixed(2),
       tasaDefault, 0, "PRESTAMO_TRABAJADOR", "S", "ACUMULADO", ""
     ]);
   }
 
-  if (filasMigrar.length === 0) {
-    Logger.log('No hay filas para migrar');
-    Logger.log('=== FIN ===');
-    return;
+  if (filasMigrar.length > 0) {
+    sheetHist.getRange(lastH + 1, 1, filasMigrar.length, 16).setValues(filasMigrar);
   }
-
-  // 4) Escribir en HISTORIAL
-  var targetRow = lastH + 1;
-  sheetHist.getRange(targetRow, 1, filasMigrar.length, 16).setValues(filasMigrar);
-  Logger.log('FILAS MIGRADAS: ' + filasMigrar.length);
-  Logger.log('=== FIN MIGRACION ===');
-}function testEgreso() {
-  Logger.log('=== INICIO ===');
-  var res = registrarOperacion({
-    tipoOperacion: "EGRESO",
-    categoria: "Pago a Proveedores",
-    concepto: "PRUEBA TEST",
-    montoBsPagado: 100,
-    cuentaSalida: "Bancamiga",
-    moneda: "BS",
-    tasaUSD: 872.39,
-    tasaUSDT: 975,
-    cuentasDesglose: [{
-      cuenta: "Bancamiga",
-      monto: 100,
-      moneda: "BS",
-      montoBs: 100
-    }],
-    comisionBs: 0,
-    metodoPago: "TRANS_MISMO_BANCO",
-    origenFondos: "ACUMULADO",
-    fechaOperacion: "2026-10-06"
-  });
-  Logger.log('RES: ' + JSON.stringify(res));
-  Logger.log('=== FIN ===');
-}function testBuscarSufijo() {
-  var ss = obtenerSpreadsheet();
-  var sheet = ss.getSheetByName("HISTORIAL");
-  var data = sheet.getDataRange().getValues();
-  // Buscar todas las filas que contengan IDEMP
-  for (var i = 0; i < data.length; i++) {
-    var concepto = data[i][9] ? data[i][9].toString() : "";
-    var match = concepto.match(/IDEMP:(\S+)/);
-    if (match) {
-      Logger.log("Fila " + (i+1) + " | TX=" + data[i][0] + 
-                 " | KEY=" + match[1] + 
-                 " | últimos 8=" + match[1].slice(-8));
-    }
-  }
-  Logger.log("=== FIN ===");
-}function testAuditoriaBancos() {
-  var ss = obtenerSpreadsheet();
-  var sheet = ss.getSheetByName("HISTORIAL");
-  var data = sheet.getDataRange().getValues();
-  var tz = "America/Caracas";
-
-  // Ajusta estas fechas si quieres un rango específico
-  var desde = "2026-10-01";
-  var hasta = "2026-10-09";
-
-  Logger.log("=== AUDITORIA BANCAMIGA vs BNC (" + desde + " a " + hasta + ") ===");
-
-  var acumBancamiga = 0;
-  var acumBNC = 0;
-  var detalle = [];
-
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    var idTx = row[0] ? row[0].toString().trim() : "";
-    if (idTx.indexOf("TX-") !== 0) continue;
-
-    var f = "";
-    try {
-      var vf = row[1];
-      if (vf instanceof Date) f = Utilities.formatDate(vf, tz, "yyyy-MM-dd");
-      else f = vf.toString().substring(0, 10);
-    } catch (e) { continue; }
-    if (f < desde || f > hasta) continue;
-
-    var tipo = row[2] ? row[2].toString().toUpperCase() : "";
-    var origen = row[3] ? row[3].toString() : "";
-    var destino = row[4] ? row[4].toString() : "";
-    var monto = limpiarNumero(row[5]);
-    var concepto = row[9] ? row[9].toString() : "";
-    var cat = row[12] ? row[12].toString() : "";
-
-    var afectaBancamiga = false;
-    var afectaBNC = false;
-    var signoBancamiga = 0;
-    var signoBNC = 0;
-
-    // Movimiento que toca Bancamiga
-    if (origen.indexOf("Bancamiga") !== -1) {
-      afectaBancamiga = true;
-      signoBancamiga = -1; // sale de origen
-    }
-    if (destino.indexOf("Bancamiga") !== -1) {
-      afectaBancamiga = true;
-      signoBancamiga = 1;  // entra a destino
-    }
-    if (origen.indexOf("BNC") !== -1) {
-      afectaBNC = true;
-      signoBNC = -1;
-    }
-    if (destino.indexOf("BNC") !== -1) {
-      afectaBNC = true;
-      signoBNC = 1;
-    }
-
-    // CIERRE_POS: acredita a cuenta (destino)
-    if (tipo.indexOf("CIERRE_POS") === 0 || tipo.indexOf("CIERRE_PAGO_MOVIL") === 0) {
-      if (destino.indexOf("Bancamiga") !== -1) {
-        acumBancamiga += monto;
-      }
-      if (destino.indexOf("BNC") !== -1) {
-        acumBNC += monto;
-      }
-    } else {
-      // Egreso/Ingreso/Traspaso
-      if (signoBancamiga !== 0) acumBancamiga += signoBancamiga * monto;
-      if (signoBNC !== 0) acumBNC += signoBNC * monto;
-    }
-
-    if (afectaBancamiga || afectaBNC) {
-      detalle.push({
-        fila: i + 1,
-        fecha: f,
-        tipo: tipo,
-        tx: idTx,
-        monto: monto,
-        bcamiga: signoBancamiga * monto,
-        bnc: signoBNC * monto,
-        concepto: concepto.substring(0, 60)
-      });
-    }
-  }
-
-  Logger.log("Total movido en BANCAMIGA: " + acumBancamiga.toFixed(2));
-  Logger.log("Total movido en BNC: " + acumBNC.toFixed(2));
-  Logger.log("--- DETALLE ---");
-  for (var j = 0; j < detalle.length; j++) {
-    var d = detalle[j];
-    Logger.log(
-      "Fila " + d.fila + " | " + d.fecha + " | " + d.tipo +
-      " | " + d.tx +
-      " | monto=" + d.monto.toFixed(2) +
-      " | Bancamiga=" + d.bcamiga.toFixed(2) +
-      " | BNC=" + d.bnc.toFixed(2) +
-      " | " + d.concepto
-    );
-  }
-
-  Logger.log("=== FIN ===");
-}function testSaldosDiaPorDia() {
-  var ss = obtenerSpreadsheet();
-  var sheet = ss.getSheetByName("HISTORIAL");
-  var data = sheet.getDataRange().getValues();
-  var tz = "America/Caracas";
-
-  // Saldo inicial del 30/09 (ajusta si tienes el dato real)
-  var saldoIni = { "Bancamiga": 0, "BNC": 0 }; // ⚠️ PON AQUÍ LOS REALES
-
-  var acum = { "Bancamiga": saldoIni.Bancamiga, "BNC": saldoIni.BNC };
-  var ultimaFecha = "";
-
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    var idTx = row[0] ? row[0].toString().trim() : "";
-    if (idTx.indexOf("TX-") !== 0) continue;
-
-    var f = "";
-    try {
-      var vf = row[1];
-      if (vf instanceof Date) f = Utilities.formatDate(vf, tz, "yyyy-MM-dd");
-      else f = vf.toString().substring(0, 10);
-    } catch (e) { continue; }
-
-    if (f < "2026-09-30" || f > "2026-10-09") continue;
-
-    if (f !== ultimaFecha && ultimaFecha !== "") {
-      Logger.log("Cierre día " + ultimaFecha +
-                 " | Bancamiga=" + acum.Bancamiga.toFixed(2) +
-                 " | BNC=" + acum.BNC.toFixed(2));
-    }
-    ultimaFecha = f;
-
-    var tipo = row[2] ? row[2].toString().toUpperCase() : "";
-    var origen = row[3] ? row[3].toString() : "";
-    var destino = row[4] ? row[4].toString() : "";
-    var monto = limpiarNumero(row[5]);
-
-    // Bancamiga
-    if (origen.indexOf("Bancamiga") !== -1) acum.Bancamiga -= monto;
-    if (destino.indexOf("Bancamiga") !== -1) acum.Bancamiga += monto;
-    // BNC
-    if (origen.indexOf("BNC") !== -1) acum.BNC -= monto;
-    if (destino.indexOf("BNC") !== -1) acum.BNC += monto;
-  }
-
-  if (ultimaFecha !== "") {
-    Logger.log("Cierre día " + ultimaFecha +
-               " | Bancamiga=" + acum.Bancamiga.toFixed(2) +
-               " | BNC=" + acum.BNC.toFixed(2));
-  }
-  Logger.log("=== FIN ===");
-}function testDriftBancos() {
-  var ss = obtenerSpreadsheet();
-  var sheet = ss.getSheetByName("HISTORIAL");
-  var data = sheet.getDataRange().getValues();
-  var tz = "America/Caracas";
-
-  // Rango: últimos 10 días
-  var desde = "2026-09-30";
-  var hasta = "2026-10-10";
-
-  var bancos = ["Bancamiga", "BNC", "BBVA", "Banesco", "Caja Efectivo Bs"];
-  var flujo = {};
-  var porDia = {};
-  bancos.forEach(function(b) { flujo[b] = 0; porDia[b] = {}; });
-
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    var idTx = row[0] ? row[0].toString().trim() : "";
-    if (idTx.indexOf("TX-") !== 0) continue;
-
-    var f = "";
-    try {
-      var vf = row[1];
-      if (vf instanceof Date) f = Utilities.formatDate(vf, tz, "yyyy-MM-dd");
-      else f = vf.toString().substring(0, 10);
-    } catch (e) { continue; }
-    if (f < desde || f > hasta) continue;
-
-    var origen = row[3] ? row[3].toString() : "";
-    var destino = row[4] ? row[4].toString() : "";
-    var monto = limpiarNumero(row[5]);
-    var tipo = row[2] ? row[2].toString() : "";
-
-    bancos.forEach(function(b) {
-      var up = b.toUpperCase();
-      if (origen.toUpperCase().indexOf(up) !== -1) {
-        flujo[b] -= monto;
-        if (!porDia[b][f]) porDia[b][f] = 0;
-        porDia[b][f] -= monto;
-      }
-      if (destino.toUpperCase().indexOf(up) !== -1) {
-        flujo[b] += monto;
-        if (!porDia[b][f]) porDia[b][f] = 0;
-        porDia[b][f] += monto;
-      }
-    });
-  }
-
-  Logger.log("=== FLUJO NETO POR BANCO (" + desde + " a " + hasta + ") ===");
-  bancos.forEach(function(b) {
-    Logger.log(b + ": " + flujo[b].toFixed(2));
-    var dias = Object.keys(porDia[b]).sort();
-    for (var d = 0; d < dias.length; d++) {
-      Logger.log("  " + dias[d] + ": " + porDia[b][dias[d]].toFixed(2));
-    }
-  });
-  Logger.log("=== FIN ===");
-}function testCierresPorBanco() {
-  var ss = obtenerSpreadsheet();
-  var sheet = ss.getSheetByName("HISTORIAL");
-  var data = sheet.getDataRange().getValues();
-  var tz = "America/Caracas";
-
-  Logger.log("=== CIERRES POS Y PM POR BANCO Y DÍA ===");
-  Logger.log("Fecha | Banco | Tipo | MontoNeto | ID_Cierre");
-
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    var idTx = row[0] ? row[0].toString().trim() : "";
-    if (idTx.indexOf("TX-") !== 0) continue;
-
-    var tipo = row[2] ? row[2].toString().toUpperCase() : "";
-    if (tipo.indexOf("CIERRE_POS") !== 0 && tipo.indexOf("CIERRE_PAGO_MOVIL") !== 0) continue;
-
-    var f = "";
-    try {
-      var vf = row[1];
-      if (vf instanceof Date) f = Utilities.formatDate(vf, tz, "yyyy-MM-dd");
-      else f = vf.toString().substring(0, 10);
-    } catch (e) { continue; }
-
-    if (f < "2026-09-30") continue;
-
-    var destino = row[4] ? row[4].toString() : "";
-    var neto = limpiarNumero(row[7]);
-    var idCierre = row[15] ? row[15].toString() : "";
-
-    Logger.log(f + " | " + destino + " | " + tipo + " | " + neto.toFixed(2) + " | " + idCierre);
-  }
-  Logger.log("=== FIN ===");
 }
-// ===============================================================================================
-// CONCILIACIÓN POR CUENTA v3 — parseo de conceptos multi-cuenta con tasas para conversión a $
-// ================================================================================================
 
-function _normCuenta(s) {
-  return (s || "").toString().toUpperCase().replace(/[_ ]/g, "").trim();
-}
+function _normCuenta(s) { return (s || "").toString().toUpperCase().replace(/[_ ]/g, "").trim(); }
 
 function _parseCuentasMulti(str) {
   var res = [];
   if (!str) return res;
   var partes = str.toString().split("|");
   for (var i = 0; i < partes.length; i++) {
-    var p = partes[i].trim();
-    var m = p.match(/^([^:]+):\s*\+?\s*([\d.,]+)\s*([A-Z]{2,4})?/);
+    var m = partes[i].trim().match(/^([^:]+):\s*\+?\s*([\d.,]+)\s*([A-Z]{2,4})?/);
     if (!m) continue;
-    var cta = m[1].trim();
     var monto = limpiarNumero(m[2]);
-    var moneda = (m[3] || "BS").toUpperCase();
-    if (!cta || monto <= 0) continue;
-    var ctaLow = cta.toLowerCase();
-    if (ctaLow.indexOf("comisión") === 0 || ctaLow.indexOf("comision") === 0 ||
-        ctaLow.indexOf("desc") === 0 || ctaLow.indexOf("idemp") === 0 ||
-        ctaLow.indexOf("enviado") === 0 || ctaLow.indexOf("recibido") === 0) continue;
-    res.push({ cuenta: cta, monto: monto, moneda: moneda });
+    if (monto > 0 && m[1].toLowerCase().indexOf("comisión") !== 0 && m[1].toLowerCase().indexOf("comision") !== 0) {
+      res.push({ cuenta: m[1].trim(), monto: monto, moneda: (m[3] || "BS").toUpperCase() });
+    }
   }
   return res;
 }
 
 function _deltasDeMovimiento(mov, cuentaNorm) {
-  var tipo = mov.tipo;
   var deltas = [];
+  var tipo = mov.tipo;
 
   if (tipo.indexOf("PAGO_NOMINA") === 0 || tipo.indexOf("LIQUIDACION") === 0) {
-    var partesNom = _parseCuentasMulti(mov.concepto);
-    for (var i = 0; i < partesNom.length; i++) {
-      if (_normCuenta(partesNom[i].cuenta) === cuentaNorm) deltas.push(-partesNom[i].monto);
-    }
+    _parseCuentasMulti(mov.concepto).forEach(function(p) { if (_normCuenta(p.cuenta) === cuentaNorm) deltas.push(-p.monto); });
     return deltas;
   }
-
   if (tipo.indexOf("COMPRA_DIVISA") === 0) {
     if (_normCuenta(mov.origen) === cuentaNorm) deltas.push(-mov.monto);
     if (_normCuenta(mov.destino) === cuentaNorm) {
@@ -4035,62 +3219,42 @@ function _deltasDeMovimiento(mov, cuentaNorm) {
     }
     return deltas;
   }
-
   if (tipo.indexOf("TRASPASO") === 0) {
-    var mE = mov.concepto.match(/Enviado:\s*([\d.,]+)/);
-    var mR = mov.concepto.match(/Recibido:\s*([\d.,]+)/);
-    var mC = mov.concepto.match(/Com:\s*([\d.,]+)/);
-    var enviado = mE ? limpiarNumero(mE[1]) : mov.monto;
-    var recibido = mR ? limpiarNumero(mR[1]) : mov.montoNeto;
-    var com = mC ? limpiarNumero(mC[1]) : 0;
+    var enviado = limpiarNumero((mov.concepto.match(/Enviado:\s*([\d.,]+)/) || [0, mov.monto])[1]);
+    var recibido = limpiarNumero((mov.concepto.match(/Recibido:\s*([\d.,]+)/) || [0, mov.montoNeto])[1]);
+    var com = limpiarNumero((mov.concepto.match(/Com:\s*([\d.,]+)/) || [0, 0])[1]);
     if (_normCuenta(mov.origen) === cuentaNorm) deltas.push(-(enviado + com));
     if (_normCuenta(mov.destino) === cuentaNorm) deltas.push(recibido);
     return deltas;
   }
-
   if (tipo.indexOf("CIERRE_POS") === 0 || tipo.indexOf("CIERRE_PAGO_MOVIL") === 0) {
-    if (_normCuenta(mov.destino) === cuentaNorm) {
-      deltas.push(mov.montoNeto > 0 ? mov.montoNeto : mov.monto);
-    }
+    if (_normCuenta(mov.destino) === cuentaNorm) deltas.push(mov.montoNeto > 0 ? mov.montoNeto : mov.monto);
     return deltas;
   }
-
   if (tipo.indexOf("INGRESO") === 0) {
     var partesI = _parseCuentasMulti(mov.destino);
-    if (partesI.length > 0) {
-      for (var i = 0; i < partesI.length; i++) {
-        if (_normCuenta(partesI[i].cuenta) === cuentaNorm) deltas.push(partesI[i].monto);
-      }
-    } else if (_normCuenta(mov.destino) === cuentaNorm) {
-      deltas.push(mov.montoNeto > 0 ? mov.montoNeto : mov.monto);
-    }
+    if (partesI.length > 0) partesI.forEach(function(p) { if (_normCuenta(p.cuenta) === cuentaNorm) deltas.push(p.monto); });
+    else if (_normCuenta(mov.destino) === cuentaNorm) deltas.push(mov.montoNeto > 0 ? mov.montoNeto : mov.monto);
     return deltas;
   }
-
-  if (tipo.indexOf("EGRESO") === 0 ||
-      tipo.indexOf("CARGO") === 0 ||
-      tipo.indexOf("PRESTAMO") === 0 ||
-      tipo.indexOf("FALTANTE") === 0) {
+  if (tipo.indexOf("EGRESO") === 0 || tipo.indexOf("CARGO") === 0 || tipo.indexOf("PRESTAMO") === 0 || tipo.indexOf("FALTANTE") === 0) {
     var partesE = _parseCuentasMulti(mov.origen);
     if (partesE.length > 0) {
-      for (var i = 0; i < partesE.length; i++) {
-        if (_normCuenta(partesE[i].cuenta) === cuentaNorm) {
-          var d = -partesE[i].monto;
-          if (i === 0 && mov.comision > 0) {
+      partesE.forEach(function(p, idx) {
+        if (_normCuenta(p.cuenta) === cuentaNorm) {
+          var d = -p.monto;
+          if (idx === 0 && mov.comision > 0) {
             var comApl = mov.comision;
-            if (partesE[i].moneda === "USD" && mov.tasaUSD > 0) comApl = mov.comision / mov.tasaUSD;
-            else if (partesE[i].moneda === "USDT" && mov.tasaUSDT > 0) comApl = mov.comision / mov.tasaUSDT;
+            if (p.moneda === "USD" && mov.tasaUSD > 0) comApl = mov.comision / mov.tasaUSD;
+            else if (p.moneda === "USDT" && mov.tasaUSDT > 0) comApl = mov.comision / mov.tasaUSDT;
             d -= comApl;
           }
           deltas.push(d);
         }
-      }
-    } else if (_normCuenta(mov.origen) === cuentaNorm) {
-      deltas.push(-mov.monto);
-    }
+      });
+    } else if (_normCuenta(mov.origen) === cuentaNorm) deltas.push(-mov.monto);
     return deltas;
   }
-
   return deltas;
 }
 
@@ -4129,60 +3293,36 @@ function obtenerConciliacionPorCuenta(payload) {
       var f = _normalizarFecha(row[1], tz);
       if (f === "") continue;
       movimientos.push({
-        fecha: f,
-        tipo: row[2] ? row[2].toString().toUpperCase() : "",
-        origen: row[3] ? row[3].toString() : "",
-        destino: row[4] ? row[4].toString() : "",
-        monto: limpiarNumero(row[5]),
-        montoNeto: limpiarNumero(row[7]),
-        comision: limpiarNumero(row[8]),
-        concepto: row[9] ? row[9].toString() : "",
-        categoria: row[12] ? row[12].toString() : "",
-        tasaUSD: limpiarNumero(row[10]),
-        tasaUSDT: limpiarNumero(row[11])
+        fecha: f, tipo: row[2] ? row[2].toString().toUpperCase() : "",
+        origen: row[3] ? row[3].toString() : "", destino: row[4] ? row[4].toString() : "",
+        monto: limpiarNumero(row[5]), montoNeto: limpiarNumero(row[7]), comision: limpiarNumero(row[8]),
+        concepto: row[9] ? row[9].toString() : "", categoria: row[12] ? row[12].toString() : "",
+        tasaUSD: limpiarNumero(row[10]), tasaUSDT: limpiarNumero(row[11])
       });
     }
   }
 
-  // === TASA DE REFERENCIA DEL RANGO ===
-  // 1) Primera tasa USD > 0 de movimientos dentro del rango
   var tasaRango = 0;
   for (var tr = 0; tr < movimientos.length; tr++) {
     var mv = movimientos[tr];
-    if (mv.fecha >= desde && mv.fecha <= hasta && mv.tasaUSD > 0) {
-      tasaRango = mv.tasaUSD;
-      break;
-    }
+    if (mv.fecha >= desde && mv.fecha <= hasta && mv.tasaUSD > 0) { tasaRango = mv.tasaUSD; break; }
   }
-  // 2) Si no hay, última tasa USD > 0 anterior o posterior
   if (tasaRango === 0) {
     for (var tr2 = movimientos.length - 1; tr2 >= 0; tr2--) {
-      if (movimientos[tr2].tasaUSD > 0) {
-        tasaRango = movimientos[tr2].tasaUSD;
-        break;
-      }
+      if (movimientos[tr2].tasaUSD > 0) { tasaRango = movimientos[tr2].tasaUSD; break; }
     }
   }
-  // 3) Fallback: tasa BCV actual de CONFIG
   if (tasaRango === 0) {
-    try {
-      var cfg = obtenerTasasConfig();
-      if (cfg && cfg.tasas && cfg.tasas.BCV) tasaRango = cfg.tasas.BCV;
-    } catch (e) {}
+    var cfg = obtenerTasasConfig();
+    if (cfg && cfg.tasas && cfg.tasas.BCV) tasaRango = cfg.tasas.BCV;
   }
 
-  var cuentas = Object.keys(saldosActuales);
   var resultado = [];
-
-  for (var k = 0; k < cuentas.length; k++) {
-    var cuenta = cuentas[k];
+  for (var k = 0; k < Object.keys(saldosActuales).length; k++) {
+    var cuenta = Object.keys(saldosActuales)[k];
     var cuentaNorm = _normCuenta(cuenta);
     var saldoActual = saldosActuales[cuenta];
-
-    var ingresosRango = 0;
-    var egresosRango = 0;
-    var ajustePosterior = 0;
-    var movsCuenta = [];
+    var ingresosRango = 0, egresosRango = 0, ajustePosterior = 0, movsCuenta = [];
 
     for (var m = 0; m < movimientos.length; m++) {
       var mov = movimientos[m];
@@ -4200,12 +3340,9 @@ function obtenerConciliacionPorCuenta(payload) {
         if (deltaTotal > 0) ingresosRango += deltaTotal;
         else egresosRango += Math.abs(deltaTotal);
         movsCuenta.push({
-          fecha: mov.fecha, tipo: mov.tipo,
-          concepto: mov.concepto, categoria: mov.categoria,
-          monto: Math.abs(deltaTotal),
-          signo: deltaTotal > 0 ? 1 : -1,
-          tasaUSD: mov.tasaUSD > 0 ? mov.tasaUSD : tasaRango,
-          tasaUSDT: mov.tasaUSDT
+          fecha: mov.fecha, tipo: mov.tipo, concepto: mov.concepto, categoria: mov.categoria,
+          monto: Math.abs(deltaTotal), signo: deltaTotal > 0 ? 1 : -1,
+          tasaUSD: mov.tasaUSD > 0 ? mov.tasaUSD : tasaRango, tasaUSDT: mov.tasaUSDT
         });
       } else {
         ajustePosterior += deltaTotal;
@@ -4216,48 +3353,18 @@ function obtenerConciliacionPorCuenta(payload) {
     var saldoInicioRango = saldoFinalRango - ingresosRango + egresosRango;
 
     resultado.push({
-      cuenta: cuenta,
-      saldoInicio: saldoInicioRango,
-      ingresos: ingresosRango,
-      egresos: egresosRango,
-      esperado: saldoFinalRango,
-      saldoActual: saldoActual,
-      tasaUSD: tasaRango,
-      movimientos: movsCuenta
+      cuenta: cuenta, saldoInicio: saldoInicioRango, ingresos: ingresosRango, egresos: egresosRango,
+      esperado: saldoFinalRango, saldoActual: saldoActual, tasaUSD: tasaRango, movimientos: movsCuenta
     });
   }
 
-  return {
-    status: "SUCCESS",
-    fechaDesde: desde,
-    fechaHasta: hasta,
-    tasaUSD: tasaRango,
-    cuentas: resultado
-  };
+  return { status: "SUCCESS", fechaDesde: desde, fechaHasta: hasta, tasaUSD: tasaRango, cuentas: resultado };
 }
-function testConciliacionTasas() {
-  var res = obtenerConciliacionPorCuenta({
-    fechaDesde: "2026-10-16",
-    fechaHasta: "2026-10-16"
-  });
-  Logger.log("tasaUSD global: " + res.tasaUSD);
-  if (res.cuentas && res.cuentas.length > 0) {
-    var c = res.cuentas[0];
-    Logger.log("Cuenta: " + c.cuenta);
-    Logger.log("Cuenta tasaUSD: " + c.tasaUSD);
-    if (c.movimientos && c.movimientos.length > 0) {
-      Logger.log("Mov 1 tasaUSD: " + c.movimientos[0].tasaUSD);
-    }
-  }
-  Logger.log(JSON.stringify(res).substring(0, 500));
-}// ============================================================================
-// OBTENER PENDIENTES POR PAGAR (Para el selector en Operaciones)
-// ============================================================================
+
 function obtenerPendientesPorPagar() {
   var ss = obtenerSpreadsheet();
   var sheet = ss.getSheetByName("CUENTAS_PENDIENTES");
   if (!sheet) return { status: "ERROR", pendientes: [] };
-
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return { status: "SUCCESS", pendientes: [] };
 
@@ -4268,22 +3375,19 @@ function obtenerPendientesPorPagar() {
     var row = data[i];
     var estado = row[8] ? row[8].toString().toUpperCase() : "PENDIENTE";
     if (estado !== "PENDIENTE") continue; 
-    
     pendientes.push({
-      id: row[0] ? row[0].toString() : "",
-      tercero: row[4] ? row[4].toString() : "",
-      concepto: row[5] ? row[5].toString() : "",
-      monto: limpiarNumero(row[6]),
-      moneda: row[7] ? row[7].toString() : "BS"
+      id: row[0] ? row[0].toString() : "", tercero: row[4] ? row[4].toString() : "",
+      concepto: row[5] ? row[5].toString() : "", monto: limpiarNumero(row[6]), moneda: row[7] ? row[7].toString() : "BS"
     });
   }
   return { status: "SUCCESS", pendientes: pendientes };
-}function procesarOperacionTrabajador(payload) {
+}
+
+function procesarOperacionTrabajador(payload) {
   var ss = obtenerSpreadsheet();
   var sheetHistorial = ss.getSheetByName("HISTORIAL");
   var sheetSaldos = ss.getSheetByName("SALDOS");
-  if (!sheetHistorial) return { status: "ERROR", mensaje: "Falta HISTORIAL" };
-  if (!sheetSaldos) return { status: "ERROR", mensaje: "Falta SALDOS" };
+  if (!sheetHistorial || !sheetSaldos) return { status: "ERROR", mensaje: "Faltan pestañas" };
 
   var fechaHoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
   var cedulaBuscada = (payload.cedula || "").toString().trim();
@@ -4294,12 +3398,8 @@ function obtenerPendientesPorPagar() {
       var rowH = histData[h];
       var tipoH = rowH[2] ? rowH[2].toString().toUpperCase() : "";
       if (tipoH === "PAGO_NOMINA" || tipoH === "LIQUIDACION_FINAL") {
-        var fechaH = _normalizarFecha(rowH[1], "America/Caracas");
-        if (fechaH === fechaHoy) {
-          var conceptoH = rowH[9] ? rowH[9].toString() : "";
-          if (conceptoH.indexOf(cedulaBuscada) !== -1) {
-            return { status: "ERROR", mensaje: "Este trabajador ya fue pagado hoy. Verifica el historial." };
-          }
+        if (_normalizarFecha(rowH[1], "America/Caracas") === fechaHoy && (rowH[9] || "").toString().indexOf(cedulaBuscada) !== -1) {
+          return { status: "ERROR", mensaje: "Este trabajador ya fue pagado hoy. Verifica el historial." };
         }
       }
     }
@@ -4308,10 +3408,8 @@ function obtenerPendientesPorPagar() {
   var idempotenciaKey = payload.idempotenciaKey || "";
   if (idempotenciaKey !== "") {
     var histCheck = sheetHistorial.getDataRange().getValues();
-    var inicioBusqueda = histCheck.length > 100 ? histCheck.length - 100 : 1;
-    for (var hi = inicioBusqueda; hi < histCheck.length; hi++) {
-      var conceptoFila = histCheck[hi][9] ? histCheck[hi][9].toString() : "";
-      if (conceptoFila.indexOf("IDEMP:" + idempotenciaKey) !== -1) {
+    for (var hi = Math.max(1, histCheck.length - 100); hi < histCheck.length; hi++) {
+      if ((histCheck[hi][9] || "").toString().indexOf("IDEMP:" + idempotenciaKey) !== -1) {
         return { status: "SUCCESS", exito: true, idTx: histCheck[hi][0].toString(), mensaje: "Ya registrado", duplicado: true };
       }
     }
@@ -4327,18 +3425,13 @@ function obtenerPendientesPorPagar() {
   var esLiquidacion = tipoOperacion.toUpperCase().indexOf("LIQUIDACI") !== -1 || tipoOperacion.toUpperCase().indexOf("FINIQUITO") !== -1;
   var descuentoDeudaUSD = limpiarNumero(payload.descuentoDeuda || 0);
   var nuevaDeuda = limpiarNumero(payload.nuevoSaldoDeuda || 0);
-  var netoFinalBs = montoBsNeto;
   var fuentes = payload.fuentesPago;
 
-  if (!fuentes || !Array.isArray(fuentes) || fuentes.length === 0) {
-    return { status: "ERROR", mensaje: "Debes agregar al menos una fuente de pago." };
-  }
+  if (!fuentes || !Array.isArray(fuentes) || fuentes.length === 0) return { status: "ERROR", mensaje: "Debes agregar al menos una fuente de pago." };
 
   var sumaFuentes = 0;
   for (var fi = 0; fi < fuentes.length; fi++) { sumaFuentes += limpiarNumero(fuentes[fi].monto || 0); }
-  if (Math.abs(sumaFuentes - netoFinalBs) > 0.01) {
-    return { status: "ERROR", mensaje: "Suma de fuentes no coincide con el neto." };
-  }
+  if (Math.abs(sumaFuentes - montoBsNeto) > 0.01) return { status: "ERROR", mensaje: "Suma de fuentes no coincide con el neto." };
 
   var descripcionFuentes = [];
   var totalComisionCalculada = 0;
@@ -4351,10 +3444,8 @@ function obtenerPendientesPorPagar() {
 
     var comisionF = metodoF === "EFECTIVO" ? 0 : montoF * 0.003;
     var totalDebitarF = montoF + comisionF;
-    var saldoF = obtenerSaldoCuenta(sheetSaldos, cuentaF);
-    if (saldoF < totalDebitarF) {
-      return { status: "ERROR", mensaje: "Fondos insuficientes en " + cuentaF };
-    }
+    if (obtenerSaldoCuenta(sheetSaldos, cuentaF) < totalDebitarF) return { status: "ERROR", mensaje: "Fondos insuficientes en " + cuentaF };
+
     actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaF, totalDebitarF, false);
     descripcionFuentes.push(cuentaF + ": " + montoF.toFixed(2));
     totalComisionCalculada += comisionF;
@@ -4363,21 +3454,17 @@ function obtenerPendientesPorPagar() {
   var origenFondos = (payload.origenFondos || "ACUMULADO").toString().toUpperCase();
   var concepto = (esLiquidacion ? "LIQUIDACIÓN FINAL - " : "PAGO NÓMINA - ") + tipoOperacion + ": " + nombre + " (V-" + cedula + ") | " + descripcionFuentes.join(" | ");
   if (idempotenciaKey !== "") concepto += " | IDEMP:" + idempotenciaKey;
-  
-  var montoTotalDebitado = netoFinalBs + totalComisionCalculada;
-  var conceptoFinal = concepto;
-  if (descuentoDeudaUSD > 0.01) conceptoFinal += " | Desc. préstamo: $" + descuentoDeudaUSD.toFixed(2) + " USD";
+  if (descuentoDeudaUSD > 0.01) concepto += " | Desc. préstamo: $" + descuentoDeudaUSD.toFixed(2) + " USD";
 
   var fechaProcStr = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
-  var tasaRefProc = obtenerTasa(fechaProcStr, "BCV");
-  var tasaFinalProc = (tasaUSD > 0) ? tasaUSD : tasaRefProc;
+  var tasaFinalProc = (tasaUSD > 0) ? tasaUSD : obtenerTasa(fechaProcStr, "BCV");
   var fuenteFinalProc = (tasaUSD > 0) ? "MANUAL" : "BCV";
 
   sheetHistorial.appendRow([
     idTx, new Date(), esLiquidacion ? "LIQUIDACION_FINAL" : "PAGO_NOMINA",
-    "VARIAS", "PERSONAL", montoTotalDebitado, "BS", netoFinalBs, totalComisionCalculada,
-    conceptoFinal, tasaUSD, 0, esLiquidacion ? "LIQUIDACION" : "NOMINA", "N", origenFondos, "",
-    tasaFinalProc, fuenteFinalProc, netoFinalBs
+    "VARIAS", "PERSONAL", (montoBsNeto + totalComisionCalculada), "BS", montoBsNeto, totalComisionCalculada,
+    concepto, tasaUSD, 0, esLiquidacion ? "LIQUIDACION" : "NOMINA", "N", origenFondos, "",
+    tasaFinalProc, fuenteFinalProc, montoBsNeto
   ]);
 
   var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL") || ss.getSheetByName("TRABAJADORES") || ss.getSheetByName("PERSONAL");
@@ -4387,7 +3474,13 @@ function obtenerPendientesPorPagar() {
     for (var i = 1; i < data.length; i++) {
       var cedulaFila = (data[i][2] || data[i][0] || "").toString().replace(/[^0-9]/g, "");
       if (cedulaFila === cedulaBuscada && cedulaBuscada !== "") {
-        if (!esLiquidacion && descuentoDeudaUSD > 0) sheetTrab.getRange(i + 1, 10).setValue(nuevaDeuda);
+          if (!esLiquidacion && descuentoDeudaUSD > 0) {
+          var deudaActualEnHoja = limpiarNumero(data[i][9] || 0);
+          var nuevaDeudaCalculada = deudaActualEnHoja - descuentoDeudaUSD;
+          if (nuevaDeudaCalculada < 0) nuevaDeudaCalculada = 0; // Evita deudas negativas
+          sheetTrab.getRange(i + 1, 10).setValue(nuevaDeudaCalculada);
+          nuevaDeuda = nuevaDeudaCalculada; // Actualizamos la variable para el recibo
+        }
         if (esLiquidacion) {
           sheetTrab.getRange(i + 1, 9).setValue("INACTIVO");
           sheetTrab.getRange(i + 1, 12).setValue(payload.fechaEgreso || Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd"));
@@ -4398,7 +3491,6 @@ function obtenerPendientesPorPagar() {
     }
   }
 
-  // Guardar detalle de recibo en RECIBOS_DETALLE
   try {
     var sheetRecibos = ss.getSheetByName("RECIBOS_DETALLE");
     if (!sheetRecibos) {
@@ -4406,54 +3498,28 @@ function obtenerPendientesPorPagar() {
       sheetRecibos.appendRow(["ID_TX", "FECHA", "CEDULA", "TIPO", "DETALLE_JSON"]);
     }
     var reciboData = {
-      idTx: idTx,
-      tipo: tipoOperacion,
-      nombre: nombre,
-      cedula: cedula,
+      idTx: idTx, tipo: tipoOperacion, nombre: nombre, cedula: cedula,
       cuenta: fuentes.map(function(f) { return f.cuenta + ": " + f.monto; }).join(" | "),
-      detSemana: limpiarNumero(payload.detSemana || 0),
-      detPrestaciones: limpiarNumero(payload.detPrestaciones || 0),
-      detVacaciones: limpiarNumero(payload.detVacaciones || 0),
-      detUtilidades: limpiarNumero(payload.detUtilidades || 0),
-      detAyudaFamiliar: limpiarNumero(payload.detAyudaFamiliar || 0),
-      detBonoAlimenticio: limpiarNumero(payload.detBonoAlimenticio || 0),
-      detComision: limpiarNumero(payload.detComision || 0),
-      totalSalarial: limpiarNumero(payload.totalSalarial || 0),
-      totalNoSalarial: limpiarNumero(payload.totalNoSalarial || 0),
-      montoBrutoUSD: limpiarNumero(payload.montoBruto || 0),
-      descuentoDeuda: descuentoDeudaUSD,
-      deudaAnterior: limpiarNumero(payload.deudaAnterior || 0),
-      montoUSD: limpiarNumero(payload.montoTotal || 0),
-      montoBs: netoFinalBs,
-      tasa: tasaUSD,
-      nuevoSaldoDeuda: nuevaDeuda,
+      detSemana: limpiarNumero(payload.detSemana || 0), detPrestaciones: limpiarNumero(payload.detPrestaciones || 0),
+      detVacaciones: limpiarNumero(payload.detVacaciones || 0), detUtilidades: limpiarNumero(payload.detUtilidades || 0),
+      detAyudaFamiliar: limpiarNumero(payload.detAyudaFamiliar || 0), detBonoAlimenticio: limpiarNumero(payload.detBonoAlimenticio || 0),
+      detComision: limpiarNumero(payload.detComision || 0), totalSalarial: limpiarNumero(payload.totalSalarial || 0),
+      totalNoSalarial: limpiarNumero(payload.totalNoSalarial || 0), montoBrutoUSD: limpiarNumero(payload.montoBruto || 0),
+      descuentoDeuda: descuentoDeudaUSD, deudaAnterior: limpiarNumero(payload.deudaAnterior || 0),
+      montoUSD: limpiarNumero(payload.montoTotal || 0), montoBs: montoBsNeto, tasa: tasaUSD, nuevoSaldoDeuda: nuevaDeuda,
       fecha: Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd HH:mm:ss"),
-      antiguedad: payload.antiguedad || "",
-      fechaEgreso: payload.fechaEgreso || "",
+      antiguedad: payload.antiguedad || "", fechaEgreso: payload.fechaEgreso || "",
       textoLegal: payload.notaLegal || (esLiquidacion ? "HE RECIBIDO A MI ENTERA SATISFACCION EL PAGO DE MI LIQUIDACIÓN" : "HE RECIBIDO A MI ENTERA SATISFACCION POR MI SEMANA DE TRABAJO"),
-      notaLegalBono: payload.notaLegalBono || null,
-      adicionales: payload.adicionales || []
+      notaLegalBono: payload.notaLegalBono || null, adicionales: payload.adicionales || []
     };
-
-    sheetRecibos.appendRow([
-      idTx,
-      reciboData.fecha,
-      cedula,
-      esLiquidacion ? "LIQUIDACION_FINAL" : "PAGO_NOMINA",
-      JSON.stringify(reciboData)
-    ]);
-  } catch (errRecibo) {
-    Logger.log("Error guardando recibo detalle: " + errRecibo.toString());
-  }
+    sheetRecibos.appendRow([idTx, reciboData.fecha, cedula, esLiquidacion ? "LIQUIDACION_FINAL" : "PAGO_NOMINA", JSON.stringify(reciboData)]);
+  } catch (errRecibo) {}
 
   return { status: "SUCCESS", exito: true, idTx: idTx, mensaje: "Pago registrado correctamente" };
 }
 
 function obtenerDetalleRecibo(payload) {
-  var idTx = "";
-  if (payload) {
-    idTx = (payload.idTx || payload.id || "").toString().trim().toUpperCase();
-  }
+  var idTx = payload ? (payload.idTx || payload.id || "").toString().trim().toUpperCase() : "";
   if (idTx === "") return { status: "ERROR", mensaje: "Falta idTx" };
 
   var ss = obtenerSpreadsheet();
@@ -4465,17 +3531,25 @@ function obtenerDetalleRecibo(payload) {
 
   var data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
   for (var i = 0; i < data.length; i++) {
-    var idFila = data[i][0] ? data[i][0].toString().trim().toUpperCase() : "";
-    if (idFila === idTx) {
-      try {
-        var jsonStr = data[i][4] ? data[i][4].toString() : "{}";
-        var detalle = JSON.parse(jsonStr);
-        return { status: "SUCCESS", exito: true, recibo: detalle };
-      } catch (e) {
-        return { status: "ERROR", mensaje: "Error al parsear el JSON del recibo: " + e.toString() };
-      }
+    if ((data[i][0] || "").toString().trim().toUpperCase() === idTx) {
+      try { return { status: "SUCCESS", exito: true, recibo: JSON.parse(data[i][4] || "{}") }; } catch (e) { return { status: "ERROR", mensaje: "Error al parsear JSON" }; }
     }
   }
-
   return { status: "ERROR", mensaje: "Recibo no encontrado para el idTx: " + idTx };
+}
+
+function _resolverTasas(payload) {
+  var fechaOp = payload.fechaOperacion || Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
+  var hoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
+  var tasaUSD = limpiarNumero(payload.tasaUSD || 0);
+  var tasaUSDT = limpiarNumero(payload.tasaUSDT || 0);
+
+  if (fechaOp < hoy) {
+    var tasaHist = obtenerTasaPorFecha(fechaOp);
+    if (tasaHist && tasaHist.BCV > 0) {
+      tasaUSD = tasaHist.BCV;
+      tasaUSDT = tasaHist.USDT;
+    }
+  }
+  return { tasaUSD: tasaUSD, tasaUSDT: tasaUSDT };
 }
