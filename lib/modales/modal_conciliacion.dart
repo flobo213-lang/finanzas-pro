@@ -35,6 +35,8 @@ class _PartidaData {
 class _GastoData {
   final TextEditingController descCtrl = TextEditingController();
   final TextEditingController montoCtrl = TextEditingController();
+  final TextEditingController cedulaCtrl =
+      TextEditingController(); // <--- AGREGA ESTA LÍNEA
   String categoria = "OPERATIVO";
   String cuenta = "Caja Efectivo Bs";
   bool afectaCuadre = true;
@@ -42,6 +44,7 @@ class _GastoData {
   void dispose() {
     descCtrl.dispose();
     montoCtrl.dispose();
+    cedulaCtrl.dispose(); // <--- AGREGA ESTA LÍNEA
   }
 }
 
@@ -451,6 +454,7 @@ class _ModalConciliacionState extends State<ModalConciliacion> {
         "tipoOperacion": "EGRESO",
         "categoria": g.categoria,
         "concepto": desc,
+        "cedula": g.cedulaCtrl.text.trim(), // <--- AGREGA ESTA LÍNEA
         "montoBsPagado": monto,
         "cuentaSalida": g.cuenta,
         "moneda": "BS",
@@ -1308,6 +1312,25 @@ class _ModalConciliacionState extends State<ModalConciliacion> {
               ),
             ],
           ),
+          if (g.categoria == "PRESTAMO_TRABAJADOR") ...[
+            const SizedBox(height: 3),
+            SizedBox(
+              height: 26,
+              child: TextField(
+                controller: g.cedulaCtrl,
+                keyboardType: TextInputType.number,
+                style: const TextStyle(fontSize: 10),
+                decoration: const InputDecoration(
+                  hintText: "Cédula del Trabajador (Obligatorio)",
+                  hintStyle: TextStyle(fontSize: 9, color: Colors.red),
+                  isDense: true,
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 3),
           InkWell(
             onTap: () => setState(() => g.afectaCuadre = !g.afectaCuadre),

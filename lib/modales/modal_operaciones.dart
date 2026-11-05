@@ -49,6 +49,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
   final TextEditingController _cedulaPrestamoEgresoCtrl =
       TextEditingController();
   String _nombrePrestamoEgreso = "";
+  String? _cedulaRealSeleccionada;
   bool _buscandoPrestamoEgreso = false;
   final List<Map<String, dynamic>> _desgloseEgreso = [];
   DateTime _fechaEgreso = DateTime.now();
@@ -943,6 +944,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
         _buscandoPrestamoEgreso = false;
         if (res['encontrado'] == true) {
           _nombrePrestamoEgreso = res['nombre'] ?? '';
+          _cedulaRealSeleccionada = res['cedula']?.toString();
         } else {
           _nombrePrestamoEgreso = '';
           _mostrarMensaje("Trabajador no encontrado", Colors.red.shade800);
@@ -1006,14 +1008,14 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       "categoria": _categoriaEgreso,
       "concepto": (_categoriaEgreso == "PRESTAMO_TRABAJADOR" &&
               _nombrePrestamoEgreso.isNotEmpty)
-          ? "${_conceptoEgresoCtrl.text.trim()} · $_nombrePrestamoEgreso (V-${_cedulaPrestamoEgresoCtrl.text.trim()})"
+          ? "${_conceptoEgresoCtrl.text.trim()} · $_nombrePrestamoEgreso (V-${_cedulaRealSeleccionada ?? ""})"
           : _conceptoEgresoCtrl.text.trim(),
       "montoBsPagado": totalBs,
       if (_categoriaEgreso == "PRESTAMO_TRABAJADOR" &&
-          _cedulaPrestamoEgresoCtrl.text.trim().isNotEmpty)
-        "cedula": _cedulaPrestamoEgresoCtrl.text.trim(),
-      if (_vincularPendiente && _idPendienteSeleccionado != null)
-        "idPendiente": _idPendienteSeleccionado, // <--- VINCULACION PENDIENTE
+          _cedulaRealSeleccionada != null &&
+          _cedulaRealSeleccionada!.isNotEmpty)
+        "cedula": _cedulaRealSeleccionada,
+      "idPendiente": _idPendienteSeleccionado, // <--- VINCULACION PENDIENTE
       "cuentaSalida": desglose.isNotEmpty ? desglose[0]['cuenta'] : "VARIAS",
       "moneda": "BS",
       "tasaUSD": widget.tasaUSD,
@@ -1705,14 +1707,14 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
                   child: DropdownButtonFormField<String>(
                     value: _idPendienteSeleccionado,
                     isExpanded: true,
-                    style:
-                        const TextStyle(fontSize: 11, color: Colors.black87),
-                    decoration:
-                        _inputDec(hint: "Seleccione cuenta pendiente"),
+                    style: const TextStyle(fontSize: 11, color: Colors.black87),
+                    decoration: _inputDec(hint: "Seleccione cuenta pendiente"),
                     items: _facturasPendientes.map((f) {
                       final tercero = f['tercero']?.toString() ?? '';
                       final concepto = f['concepto']?.toString() ?? '';
-                      final desc = concepto.isNotEmpty ? "$tercero - $concepto" : tercero;
+                      final desc = concepto.isNotEmpty
+                          ? "$tercero - $concepto"
+                          : tercero;
                       return DropdownMenuItem<String>(
                         value: f['id'].toString(),
                         child: Text(
@@ -1724,19 +1726,21 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
                     onChanged: (v) {
                       setState(() {
                         _idPendienteSeleccionado = v;
-                        final f = _facturasPendientes
-                            .firstWhere((x) => x['id'].toString() == v, orElse: () => null);
+                        final f = _facturasPendientes.firstWhere(
+                            (x) => x['id'].toString() == v,
+                            orElse: () => null);
                         if (f != null) {
                           final tercero = f['tercero']?.toString() ?? '';
                           final concepto = f['concepto']?.toString() ?? '';
                           _conceptoEgresoCtrl.text = concepto.isNotEmpty
                               ? "$tercero - $concepto"
                               : tercero;
-                          _montoEgresoCtrl.text = (f['monto'] as num)
-                              .toDouble()
-                              .toStringAsFixed(2);
-                          if (f['moneda'] != null && f['moneda'].toString().isNotEmpty) {
-                            _monedaCalcEgreso = f['moneda'].toString().toUpperCase();
+                          _montoEgresoCtrl.text =
+                              (f['monto'] as num).toDouble().toStringAsFixed(2);
+                          if (f['moneda'] != null &&
+                              f['moneda'].toString().isNotEmpty) {
+                            _monedaCalcEgreso =
+                                f['moneda'].toString().toUpperCase();
                           }
                         }
                       });
