@@ -555,7 +555,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                 (act['movimientos'] as num?)?.toDouble() ?? 0,
                 (ant['movimientos'] as num?)?.toDouble() ?? 0,
                 0,
-                Colors.grey.shade700),
+                Colors.grey.shade700,
+                esMoneda: false), // <--- AGREGA ESTO
           ]),
         ],
       ),
@@ -588,7 +589,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
 
   Widget _filaComp(
       String label, double monto, double montoAnt, double pct, Color color,
-      {bool bold = false}) {
+      {bool bold = false, bool esMoneda = true}) {
+    // <--- AGREGA ESTO
     final pctEsPositivo = pct >= 0;
     final colorPct =
         pctEsPositivo ? Colors.green.shade700 : Colors.red.shade700;
@@ -610,16 +612,20 @@ class _ModalConsultasState extends State<ModalConsultas> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text('${_fmt.format(monto)} Bs',
+                Text(
+                    esMoneda
+                        ? '${_fmt.format(monto)} Bs'
+                        : '${monto.toInt()}', // <--- CAMBIO AQUI
                     style: TextStyle(
                         fontSize: bold ? 11.5 : 10.5,
                         fontWeight: FontWeight.bold,
                         color: color)),
-                Text('≈ \$ ${_fmtUsd(monto)}',
-                    style: TextStyle(
-                        fontSize: 8.5,
-                        color: color.withValues(alpha: 0.7),
-                        fontWeight: FontWeight.bold)),
+                if (esMoneda)
+                  Text('≈ \$ ${_fmtUsd(monto)}',
+                      style: TextStyle(
+                          fontSize: 8.5,
+                          color: color.withValues(alpha: 0.7),
+                          fontWeight: FontWeight.bold)),
               ],
             ),
           ),
@@ -787,9 +793,10 @@ class _ModalConsultasState extends State<ModalConsultas> {
                                 cuentaOrigen = origen;
                               }
 
-                              final esNominaOLiquidacion = tipo.contains('NOMINA') ||
-                                  tipo.contains('LIQUIDAC') ||
-                                  tipo.contains('PAGO_NOMINA');
+                              final esNominaOLiquidacion =
+                                  tipo.contains('NOMINA') ||
+                                      tipo.contains('LIQUIDAC') ||
+                                      tipo.contains('PAGO_NOMINA');
                               final idTx = m['idTx']?.toString() ?? '';
 
                               return Padding(
@@ -845,7 +852,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                                         ],
                                       ),
                                     ),
-                                    if (esNominaOLiquidacion && idTx.isNotEmpty) ...[
+                                    if (esNominaOLiquidacion &&
+                                        idTx.isNotEmpty) ...[
                                       InkWell(
                                         onTap: () => _reimprimirRecibo(idTx),
                                         borderRadius: BorderRadius.circular(4),
@@ -1308,13 +1316,14 @@ class _ModalConsultasState extends State<ModalConsultas> {
                   onTap: () => _reimprimirRecibo(idTx),
                   borderRadius: BorderRadius.circular(4),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                     decoration: BoxDecoration(
                       color: const Color(0xFF0F52BA).withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(4),
                       border: Border.all(
-                          color: const Color(0xFF0F52BA).withValues(alpha: 0.3)),
+                          color:
+                              const Color(0xFF0F52BA).withValues(alpha: 0.3)),
                     ),
                     child: const Row(
                       children: [
@@ -2693,7 +2702,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                   children: [
                     pw.Text("  ${ad['categoria']}",
                         style: const pw.TextStyle(fontSize: 8)),
-                    pw.Text("\$ ${((ad['monto'] ?? 0) as num).toStringAsFixed(2)}",
+                    pw.Text(
+                        "\$ ${((ad['monto'] ?? 0) as num).toStringAsFixed(2)}",
                         style: const pw.TextStyle(fontSize: 8)),
                   ],
                 );
@@ -2725,7 +2735,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                 children: [
                   pw.Text("Sueldo Semanal:",
                       style: const pw.TextStyle(fontSize: 8)),
-                  pw.Text("\$ ${((datos['detSemana'] ?? 0) as num).toStringAsFixed(2)}",
+                  pw.Text(
+                      "\$ ${((datos['detSemana'] ?? 0) as num).toStringAsFixed(2)}",
                       style: const pw.TextStyle(fontSize: 8)),
                 ],
               ),
@@ -2735,7 +2746,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                 children: [
                   pw.Text("Prestaciones:",
                       style: const pw.TextStyle(fontSize: 8)),
-                  pw.Text("\$ ${((datos['detPrestaciones'] ?? 0) as num).toStringAsFixed(2)}",
+                  pw.Text(
+                      "\$ ${((datos['detPrestaciones'] ?? 0) as num).toStringAsFixed(2)}",
                       style: const pw.TextStyle(fontSize: 8)),
                 ],
               ),
@@ -2745,7 +2757,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                 children: [
                   pw.Text("Vacaciones + Bono:",
                       style: const pw.TextStyle(fontSize: 8)),
-                  pw.Text("\$ ${((datos['detVacaciones'] ?? 0) as num).toStringAsFixed(2)}",
+                  pw.Text(
+                      "\$ ${((datos['detVacaciones'] ?? 0) as num).toStringAsFixed(2)}",
                       style: const pw.TextStyle(fontSize: 8)),
                 ],
               ),
@@ -2755,7 +2768,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                 children: [
                   pw.Text("Utilidades:",
                       style: const pw.TextStyle(fontSize: 8)),
-                  pw.Text("\$ ${((datos['detUtilidades'] ?? 0) as num).toStringAsFixed(2)}",
+                  pw.Text(
+                      "\$ ${((datos['detUtilidades'] ?? 0) as num).toStringAsFixed(2)}",
                       style: const pw.TextStyle(fontSize: 8)),
                 ],
               ),
@@ -2766,7 +2780,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                 pw.Text("Subtotal Salarial:",
                     style: const pw.TextStyle(
                         fontWeight: pw.FontWeight.bold, fontSize: 8)),
-                pw.Text("\$ ${((datos['totalSalarial'] ?? 0) as num).toStringAsFixed(2)}",
+                pw.Text(
+                    "\$ ${((datos['totalSalarial'] ?? 0) as num).toStringAsFixed(2)}",
                     style: const pw.TextStyle(
                         fontWeight: pw.FontWeight.bold, fontSize: 8)),
               ],
@@ -2825,7 +2840,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                 pw.Text("Total Bruto:",
                     style: const pw.TextStyle(
                         fontWeight: pw.FontWeight.bold, fontSize: 8)),
-                pw.Text("\$ ${((datos['montoBrutoUSD'] ?? 0) as num).toStringAsFixed(2)}",
+                pw.Text(
+                    "\$ ${((datos['montoBrutoUSD'] ?? 0) as num).toStringAsFixed(2)}",
                     style: const pw.TextStyle(
                         fontWeight: pw.FontWeight.bold, fontSize: 8)),
               ],
@@ -2837,7 +2853,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                 children: [
                   pw.Text("Deuda Anterior:",
                       style: const pw.TextStyle(fontSize: 8)),
-                  pw.Text("\$ ${((datos['deudaAnterior'] ?? 0) as num).toStringAsFixed(2)}",
+                  pw.Text(
+                      "\$ ${((datos['deudaAnterior'] ?? 0) as num).toStringAsFixed(2)}",
                       style: const pw.TextStyle(fontSize: 8)),
                 ],
               ),
@@ -2847,7 +2864,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                   pw.Text("Abono a Deuda:",
                       style: const pw.TextStyle(
                           fontSize: 8, color: PdfColors.green800)),
-                  pw.Text("- \$ ${((datos['descuentoDeuda'] ?? 0) as num).toStringAsFixed(2)}",
+                  pw.Text(
+                      "- \$ ${((datos['descuentoDeuda'] ?? 0) as num).toStringAsFixed(2)}",
                       style: const pw.TextStyle(
                           fontSize: 8, color: PdfColors.green800)),
                 ],
@@ -2858,7 +2876,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                   pw.Text("Nueva Deuda:",
                       style: const pw.TextStyle(
                           fontSize: 8, fontWeight: pw.FontWeight.bold)),
-                  pw.Text("\$ ${((datos['nuevoSaldoDeuda'] ?? 0) as num).toStringAsFixed(2)}",
+                  pw.Text(
+                      "\$ ${((datos['nuevoSaldoDeuda'] ?? 0) as num).toStringAsFixed(2)}",
                       style: const pw.TextStyle(
                           fontSize: 8, fontWeight: pw.FontWeight.bold)),
                 ],
@@ -2870,7 +2889,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                 pw.Text("Total Neto:",
                     style: const pw.TextStyle(
                         fontWeight: pw.FontWeight.bold, fontSize: 9)),
-                pw.Text("\$ ${((datos['montoUSD'] ?? 0) as num).toStringAsFixed(2)}",
+                pw.Text(
+                    "\$ ${((datos['montoUSD'] ?? 0) as num).toStringAsFixed(2)}",
                     style: const pw.TextStyle(
                         fontWeight: pw.FontWeight.bold, fontSize: 9)),
               ],
@@ -2881,7 +2901,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
                 pw.Text("Pagado en Bs:",
                     style: const pw.TextStyle(
                         fontWeight: pw.FontWeight.bold, fontSize: 9)),
-                pw.Text("${((datos['montoBs'] ?? 0) as num).toStringAsFixed(2)} Bs",
+                pw.Text(
+                    "${((datos['montoBs'] ?? 0) as num).toStringAsFixed(2)} Bs",
                     style: const pw.TextStyle(
                         fontWeight: pw.FontWeight.bold, fontSize: 9)),
               ],
@@ -2890,7 +2911,8 @@ class _ModalConsultasState extends State<ModalConsultas> {
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text("Tasa:", style: const pw.TextStyle(fontSize: 7)),
-                pw.Text("${((datos['tasa'] ?? 0) as num).toStringAsFixed(2)} Bs/\$",
+                pw.Text(
+                    "${((datos['tasa'] ?? 0) as num).toStringAsFixed(2)} Bs/\$",
                     style: const pw.TextStyle(fontSize: 7)),
               ],
             ),
@@ -2927,8 +2949,7 @@ class _ModalConsultasState extends State<ModalConsultas> {
         onLayout: (PdfPageFormat format) async => doc.save());
   }
 
-  void _mostrarDialogoRecibo(
-      BuildContext context, Map<String, dynamic> datos) {
+  void _mostrarDialogoRecibo(BuildContext context, Map<String, dynamic> datos) {
     final notaLegal = datos['notaLegalBono'] as String?;
 
     showDialog(
@@ -3001,41 +3022,65 @@ class _ModalConsultasState extends State<ModalConsultas> {
                                 color: Colors.red.shade700)),
                       const Divider(height: 12),
                       if (((datos['detSemana'] ?? 0) as num) > 0)
-                        _filaDesgloseRecibo("Sueldo Semanal",
-                            (datos['detSemana'] as num).toDouble(), Colors.black87),
+                        _filaDesgloseRecibo(
+                            "Sueldo Semanal",
+                            (datos['detSemana'] as num).toDouble(),
+                            Colors.black87),
                       if (((datos['detPrestaciones'] ?? 0) as num) > 0)
-                        _filaDesgloseRecibo("Prestaciones",
-                            (datos['detPrestaciones'] as num).toDouble(), Colors.black87),
+                        _filaDesgloseRecibo(
+                            "Prestaciones",
+                            (datos['detPrestaciones'] as num).toDouble(),
+                            Colors.black87),
                       if (((datos['detVacaciones'] ?? 0) as num) > 0)
-                        _filaDesgloseRecibo("Vacaciones + Bono",
-                            (datos['detVacaciones'] as num).toDouble(), Colors.black87),
+                        _filaDesgloseRecibo(
+                            "Vacaciones + Bono",
+                            (datos['detVacaciones'] as num).toDouble(),
+                            Colors.black87),
                       if (((datos['detUtilidades'] ?? 0) as num) > 0)
-                        _filaDesgloseRecibo("Utilidades",
-                            (datos['detUtilidades'] as num).toDouble(), Colors.black87),
+                        _filaDesgloseRecibo(
+                            "Utilidades",
+                            (datos['detUtilidades'] as num).toDouble(),
+                            Colors.black87),
                       const Divider(height: 12),
                       if (((datos['detAyudaFamiliar'] ?? 0) as num) > 0)
-                        _filaDesgloseRecibo("Ayuda Familiar",
-                            (datos['detAyudaFamiliar'] as num).toDouble(), Colors.grey.shade700),
+                        _filaDesgloseRecibo(
+                            "Ayuda Familiar",
+                            (datos['detAyudaFamiliar'] as num).toDouble(),
+                            Colors.grey.shade700),
                       if (((datos['detBonoAlimenticio'] ?? 0) as num) > 0)
-                        _filaDesgloseRecibo("Bono Alimenticio",
-                            (datos['detBonoAlimenticio'] as num).toDouble(), Colors.grey.shade700),
+                        _filaDesgloseRecibo(
+                            "Bono Alimenticio",
+                            (datos['detBonoAlimenticio'] as num).toDouble(),
+                            Colors.grey.shade700),
                       const Divider(height: 12),
                       if (((datos['descuentoDeuda'] ?? 0) as num) > 0) ...[
                         const Divider(height: 12),
-                        _filaDesgloseRecibo("Deuda Anterior",
-                            (datos['deudaAnterior'] as num).toDouble(), Colors.red.shade700),
-                        _filaDesgloseRecibo("Abono a Deuda",
-                            -(datos['descuentoDeuda'] as num).toDouble(), Colors.green.shade700),
-                        _filaDesgloseRecibo("Nueva Deuda",
-                            (datos['nuevoSaldoDeuda'] as num).toDouble(), Colors.red.shade900,
+                        _filaDesgloseRecibo(
+                            "Deuda Anterior",
+                            (datos['deudaAnterior'] as num).toDouble(),
+                            Colors.red.shade700),
+                        _filaDesgloseRecibo(
+                            "Abono a Deuda",
+                            -(datos['descuentoDeuda'] as num).toDouble(),
+                            Colors.green.shade700),
+                        _filaDesgloseRecibo(
+                            "Nueva Deuda",
+                            (datos['nuevoSaldoDeuda'] as num).toDouble(),
+                            Colors.red.shade900,
                             negrita: true),
                       ],
-                      _filaDesgloseRecibo("TOTAL USD",
-                          ((datos['montoUSD'] ?? 0) as num).toDouble(), Colors.blue,
-                          negrita: true, grande: true),
-                      _filaDesgloseRecibo("TOTAL Bs",
-                          ((datos['montoBs'] ?? 0) as num).toDouble(), Colors.green,
-                          negrita: true, grande: true),
+                      _filaDesgloseRecibo(
+                          "TOTAL USD",
+                          ((datos['montoUSD'] ?? 0) as num).toDouble(),
+                          Colors.blue,
+                          negrita: true,
+                          grande: true),
+                      _filaDesgloseRecibo(
+                          "TOTAL Bs",
+                          ((datos['montoBs'] ?? 0) as num).toDouble(),
+                          Colors.green,
+                          negrita: true,
+                          grande: true),
                       const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.all(5),
