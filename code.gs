@@ -3448,3 +3448,55 @@ function _calcularEstadisticasRango(desde, hasta) {
 function probarReporte() {
   Logger.log(JSON.stringify(_calcularEstadisticasRango("2026-11-01", "2026-11-05")));
 }
+function obtenerEstadisticas(payload) {
+  var desde = "";
+  var hasta = "";
+  if (payload) {
+    desde = (payload.fechaDesde || "").toString().trim();
+    hasta = (payload.fechaHasta || "").toString().trim();
+  }
+  if (desde === "" || hasta === "") {
+    var hoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
+    desde = hoy;
+    hasta = hoy;
+  }
+
+  var actual = _calcularEstadisticasRango(desde, hasta);
+
+  // Calcular rango anterior de igual longitud
+  var d1 = new Date(desde + "T12:00:00");
+  var d2 = new Date(hasta + "T12:00:00");
+  var dias = Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1;
+  var prevHasta = new Date(d1.getTime() - 86400000);
+  var prevDesde = new Date(prevHasta.getTime() - (dias - 1) * 86400000);
+  var prevDesdeStr = Utilities.formatDate(prevDesde, "America/Caracas", "yyyy-MM-dd");
+  var prevHastaStr = Utilities.formatDate(prevHasta, "America/Caracas", "yyyy-MM-dd");
+
+  var anterior = _calcularEstadisticasRango(prevDesdeStr, prevHastaStr);
+
+  // Calcular variaciones %
+  function varPct(act, ant) {
+    if (ant <= 0) return act > 0 ? 100 : 0;
+    return ((act - ant) / ant) * 100;
+  }
+
+  return {
+    status: "SUCCESS",
+    fechaDesde: desde,
+    fechaHasta: hasta,
+    fechaDesdeAnterior: prevDesdeStr,
+    fechaHastaAnterior: prevHastaStr,
+    actual: actual,
+    anterior: anterior,
+    variaciones: {
+      ventas: varPct(actual.ventas, anterior.ventas),
+      egresos: varPct(actual.totalEgresos, anterior.totalEgresos),
+      ganancia: varPct(actual.ganancia, anterior.ganancia),
+      personal: varPct(actual.personal, anterior.personal),
+      nomina: varPct(actual.nomina, anterior.nomina),
+      proveedores: varPct(actual.proveedores, anterior.proveedores),
+      comisiones: varPct(actual.comisiones, anterior.comisiones),
+      servicios: varPct(actual.servicios, anterior.servicios)
+    }
+  };
+}
