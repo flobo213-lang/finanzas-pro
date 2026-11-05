@@ -978,7 +978,7 @@ function registrarCierreJornada(payload) {
     var origenHC = (rowHC[14] || "ACUMULADO").toString().toUpperCase();
     
     // Si es de HOY y salió de la Venta del Día
-    if (fechaHC === fechaHoy && origenHC === "VENTA_DIA") {
+    if (fechaHC === fechaOp && origenHC === "VENTA_DIA") {
       var tipoHC = (rowHC[2] || "").toString().toUpperCase();
       // Sumamos egresos y préstamos, pero no los traspasos internos
       if (tipoHC.indexOf("EGRESO") !== -1 || tipoHC.indexOf("PRESTAMO") !== -1 || tipoHC.indexOf("GASTO") !== -1) {
