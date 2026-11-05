@@ -94,6 +94,11 @@ class _ModalConciliacionState extends State<ModalConciliacion> {
     "MANTENIMIENTO",
     "PRESTAMO_TRABAJADOR",
     "OTROS",
+    "ALQUILER", // <--- NUEVA
+    "GASTO_FINANCIERO", // <--- NUEVA
+    "IMPUESTOS", // <--- NUEVA
+    "AJUSTE_CAJA", // <--- NUEVA
+    "GASTOS_PERSONALES", // <--- NUEVA
   ];
 
   @override

@@ -119,6 +119,11 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
     "PERSONAL",
     "Otros Egresos",
     "PRESTAMO_TRABAJADOR",
+    "ALQUILER", // <--- NUEVA
+    "GASTO_FINANCIERO", // <--- NUEVA
+    "IMPUESTOS", // <--- NUEVA
+    "AJUSTE_CAJA", // <--- NUEVA
+    "GASTOS_PERSONALES", // <--- NUEVA
   ];
 
   final List<String> _categoriasIngreso = [
