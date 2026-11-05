@@ -2610,70 +2610,21 @@ function onOpen() {
       }
     } catch (e) {}
   });
-}function obtenerEstadisticas(payload) {
-  var desde = "";
-  var hasta = "";
-  if (payload) {
-    desde = (payload.fechaDesde || "").toString().trim();
-    hasta = (payload.fechaHasta || "").toString().trim();
-  }
-  if (desde === "" || hasta === "") {
-    var hoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
-    desde = hoy;
-    hasta = hoy;
-  }
-
-  var actual = _calcularEstadisticasRango(desde, hasta);
-
-  // Calcular rango anterior de igual longitud
-  var d1 = new Date(desde + "T12:00:00");
-  var d2 = new Date(hasta + "T12:00:00");
-  var dias = Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1;
-  var prevHasta = new Date(d1.getTime() - 86400000);
-  var prevDesde = new Date(prevHasta.getTime() - (dias - 1) * 86400000);
-  var prevDesdeStr = Utilities.formatDate(prevDesde, "America/Caracas", "yyyy-MM-dd");
-  var prevHastaStr = Utilities.formatDate(prevHasta, "America/Caracas", "yyyy-MM-dd");
-
-  var anterior = _calcularEstadisticasRango(prevDesdeStr, prevHastaStr);
-
-  // Calcular variaciones %
-  function varPct(act, ant) {
-    if (ant <= 0) return act > 0 ? 100 : 0;
-    return ((act - ant) / ant) * 100;
-  }
-
-  return {
-    status: "SUCCESS",
-    fechaDesde: desde,
-    fechaHasta: hasta,
-    fechaDesdeAnterior: prevDesdeStr,
-    fechaHastaAnterior: prevHastaStr,
-    actual: actual,
-    anterior: anterior,
-    variaciones: {
-      ventas: varPct(actual.ventas, anterior.ventas),
-      egresos: varPct(actual.totalEgresos, anterior.totalEgresos),
-      ganancia: varPct(actual.ganancia, anterior.ganancia),
-      personal: varPct(actual.personal, anterior.personal),
-      nomina: varPct(actual.nomina, anterior.nomina),
-      proveedores: varPct(actual.proveedores, anterior.proveedores),
-      comisiones: varPct(actual.comisiones, anterior.comisiones),
-      servicios: varPct(actual.servicios, anterior.servicios)
-    }
-  };
 }
 
 function _calcularEstadisticasRango(desde, hasta) {
   var ss = obtenerSpreadsheet();
   var sheetHist = ss.getSheetByName("HISTORIAL");
+  var sheetDif = ss.getSheetByName("DIFERENCIAS_CAMBIARIAS");
+  
   var resultado = {
-    ventas: 0, comisiones: 0, ventasNetas: 0, egresosOperativos: 0,
-    personal: 0, nomina: 0, proveedores: 0, servicios: 0,
-    comprasDivisa: 0, faltantes: 0, otros: 0, totalEgresos: 0,
-    caja: 0, ganancia: 0, margen: 0, movimientos: 0
+    ventas: 0, comisiones: 0, ventasNetas: 0,
+    proveedores: 0, personal: 0, nomina: 0, servicios: 0, otros: 0, comprasDivisa: 0,
+    totalEgresos: 0, perdidaCambiariaUSD: 0, perdidaCambiariaBs: 0,
+    ganancia: 0, margen: 0, movimientos: 0
   };
+  
   if (!sheetHist) return resultado;
-
   var lastRow = sheetHist.getLastRow();
   if (lastRow < 2) return resultado;
 
@@ -2685,32 +2636,28 @@ function _calcularEstadisticasRango(desde, hasta) {
     var idTx = row[0] ? row[0].toString().trim().toUpperCase() : "";
     if (idTx.indexOf("TX-") !== 0) continue;
 
-    var f = "";
-    try {
-      var vf = row[1];
-      f = _normalizarFecha(vf, tz);
-    } catch (e) { continue; }
-
+    var f = _normalizarFecha(row[1], tz);
     if (f === "" || f < desde || f > hasta) continue;
 
     resultado.movimientos++;
-
     var tipo = row[2] ? row[2].toString().toUpperCase() : "";
-    var origen = row[3] ? row[3].toString() : "";
     var monto = limpiarNumero(row[5]);
     var montoNeto = limpiarNumero(row[7]);
     var comision = limpiarNumero(row[8]);
     var categoria = row[12] ? row[12].toString().toUpperCase() : "";
 
-    var esIngreso = tipo.indexOf("INGRESO") === 0 ||
-                    tipo.indexOf("CIERRE_POS") === 0 ||
-                    tipo.indexOf("CIERRE_PAGO_MOVIL") === 0;
+    var esIngreso = tipo.indexOf("INGRESO") === 0 || tipo.indexOf("CIERRE_POS") === 0 || tipo.indexOf("CIERRE_PAGO_MOVIL") === 0;
 
     if (esIngreso) {
-      resultado.ventas += montoNeto > 0 ? montoNeto : monto;
+      resultado.ventas += (montoNeto > 0 ? montoNeto : monto);
     } else {
       var neto = montoNeto > 0 ? montoNeto : monto;
       if (tipo.indexOf("TRASPASO") === 0) continue;
+
+      // EXCLUIMOS PRÉSTAMOS DE LOS GASTOS (Son activos, no pérdidas)
+      if (tipo.indexOf("PRESTAMO") === 0 || categoria === "PRESTAMO_TRABAJADOR") {
+        continue;
+      }
 
       if (tipo.indexOf("COMPRA_DIVISA") === 0) {
         resultado.comprasDivisa += monto;
@@ -2726,9 +2673,6 @@ function _calcularEstadisticasRango(desde, hasta) {
       } else if (categoria === "SERVICIOS" || categoria === "SERVICIOS BÁSICOS") {
         resultado.servicios += neto;
         resultado.totalEgresos += neto;
-      } else if (categoria === "FALTANTE") {
-        resultado.faltantes += neto;
-        resultado.totalEgresos += neto;
       } else {
         resultado.otros += neto;
         resultado.totalEgresos += neto;
@@ -2737,9 +2681,27 @@ function _calcularEstadisticasRango(desde, hasta) {
     resultado.comisiones += comision;
   }
 
+  // === CÁLCULO DE PÉRDIDA CAMBIARIA ===
+  if (sheetDif) {
+    var lastDif = sheetDif.getLastRow();
+    if (lastDif >= 2) {
+      var dataDif = sheetDif.getRange(2, 1, lastDif - 1, 8).getValues();
+      for (var d = 0; d < dataDif.length; d++) {
+        var fechaDif = _normalizarFecha(dataDif[d][1], tz);
+        if (fechaDif >= desde && fechaDif <= hasta) {
+          var difUsd = limpiarNumero(dataDif[d][7]);
+          var tasaCierre = limpiarNumero(dataDif[d][3]);
+          resultado.perdidaCambiariaUSD += difUsd;
+          resultado.perdidaCambiariaBs += (difUsd * tasaCierre);
+        }
+      }
+    }
+  }
+
   resultado.ventasNetas = resultado.ventas - resultado.comisiones;
-  resultado.caja = resultado.ventasNetas - resultado.totalEgresos;
-  resultado.ganancia = resultado.caja;
+  
+  // GANANCIA REAL: Ventas Netas - Gastos Operativos - Pérdida Cambiaria
+  resultado.ganancia = resultado.ventasNetas - resultado.totalEgresos - resultado.perdidaCambiariaBs;
   resultado.margen = resultado.ventasNetas > 0 ? (resultado.ganancia / resultado.ventasNetas) * 100 : 0;
 
   return resultado;
