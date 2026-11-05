@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 02-11-26 10.33AM
+// Versión: 3.727 MODIFICADO DEEP 02-11-26 12.35pm
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -1709,12 +1709,12 @@ function registrarOperacion(payload) {
   var tasaRefOp = obtenerTasa(fechaOpStr, fuenteBuscadaOp);
   var tasaFinalOp = (tasaUSD > 0) ? tasaUSD : tasaRefOp;
   var fuenteFinalOp = (tasaUSD > 0) ? "MANUAL" : fuenteBuscadaOp;
-  var montoBsOp = (payload.moneda === "USD" || payload.moneda === "USDT") ? (montoFinal * tasaFinalOp) : montoFinal;
+var montoBsOp = (payload.moneda === "USD" || payload.moneda === "USDT") ? (montoTotal * tasaFinalOp) : montoTotal;
 
   sheetHistorial.appendRow([
     idTx, fechaTx, tipoOperacion, cuentaSalida, "VARIAS",
-    montoFinal, "BS", montoFinal, comisionBs,
-    concepto + notaComision,
+    montoTotal, "BS", montoTotal, comisionBs,
+    concepto,
     tasaUSD, tasaUSDT, categoria, parteDelCierre, origenFondos, "",
     tasaFinalOp, fuenteFinalOp, montoBsOp
   ]);
