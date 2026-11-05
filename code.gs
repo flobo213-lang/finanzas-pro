@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 05-11-26 10.33AM
+// Versión: 3.727 MODIFICADO DEEP 02-11-26 10.33AM
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
