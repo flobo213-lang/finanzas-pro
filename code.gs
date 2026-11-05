@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 05-11-26 2.35pm
+// Versión: 3.727 MODIFICADO DEEP 02-11-26 2.35pm
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -2612,177 +2612,7 @@ function onOpen() {
   });
 }
 
-function _calcularEstadisticasRango(desde, hasta) {
-  var ss = obtenerSpreadsheet();
-  var sheetHist = ss.getSheetByName("HISTORIAL");
-  var sheetDif = ss.getSheetByName("DIFERENCIAS_CAMBIARIAS");
-  
-  var resultado = {
-    ventas: 0, comisiones: 0, ventasNetas: 0,
-    proveedores: 0, personal: 0, nomina: 0, servicios: 0, otros: 0, comprasDivisa: 0,
-    totalEgresos: 0, perdidaCambiariaUSD: 0, perdidaCambiariaBs: 0,
-    ganancia: 0, margen: 0, movimientos: 0
-  };
-  
-  if (!sheetHist) return resultado;
-  var lastRow = sheetHist.getLastRow();
-  if (lastRow < 2) return resultado;
 
-  var tz = "America/Caracas";
-  var data = sheetHist.getRange(2, 1, lastRow - 1, 16).getValues();
-
-  for (var i = 0; i < data.length; i++) {
-    var row = data[i];
-    var idTx = row[0] ? row[0].toString().trim().toUpperCase() : "";
-    if (idTx.indexOf("TX-") !== 0) continue;
-
-    var f = _normalizarFecha(row[1], tz);
-    if (f === "" || f < desde || f > hasta) continue;
-
-    resultado.movimientos++;
-    var tipo = row[2] ? row[2].toString().toUpperCase() : "";
-    var monto = limpiarNumero(row[5]);
-    var montoNeto = limpiarNumero(row[7]);
-    var comision = limpiarNumero(row[8]);
-    var categoria = row[12] ? row[12].toString().toUpperCase() : "";
-
-    var esIngreso = tipo.indexOf("INGRESO") === 0 || tipo.indexOf("CIERRE_POS") === 0 || tipo.indexOf("CIERRE_PAGO_MOVIL") === 0;
-
-    if (esIngreso) {
-      resultado.ventas += (montoNeto > 0 ? montoNeto : monto);
-    } else {
-      var neto = montoNeto > 0 ? montoNeto : monto;
-      if (tipo.indexOf("TRASPASO") === 0) continue;
-
-      // EXCLUIMOS PRÉSTAMOS DE LOS GASTOS (Son activos, no pérdidas)
-      if (tipo.indexOf("PRESTAMO") === 0 || categoria === "PRESTAMO_TRABAJADOR") {
-        continue;
-      }
-
-      if (tipo.indexOf("COMPRA_DIVISA") === 0) {
-        resultado.comprasDivisa += monto;
-      } else if (tipo.indexOf("NOMINA") !== -1 || tipo.indexOf("LIQUIDACION") !== -1) {
-        resultado.nomina += neto;
-        resultado.totalEgresos += neto;
-      } else if (categoria === "PERSONAL") {
-        resultado.personal += neto;
-        resultado.totalEgresos += neto;
-      } else if (categoria === "PROVEEDORES" || categoria === "PAGO A PROVEEDORES") {
-        resultado.proveedores += neto;
-        resultado.totalEgresos += neto;
-      } else if (categoria === "SERVICIOS" || categoria === "SERVICIOS BÁSICOS") {
-        resultado.servicios += neto;
-        resultado.totalEgresos += neto;
-      } else {
-        resultado.otros += neto;
-        resultado.totalEgresos += neto;
-      }
-    }
-    resultado.comisiones += comision;
-  }
-
-  // === CÁLCULO DE PÉRDIDA CAMBIARIA ===
-  if (sheetDif) {
-    var lastDif = sheetDif.getLastRow();
-    if (lastDif >= 2) {
-      var dataDif = sheetDif.getRange(2, 1, lastDif - 1, 8).getValues();
-      for (var d = 0; d < dataDif.length; d++) {
-        var fechaDif = _normalizarFecha(dataDif[d][1], tz);
-        if (fechaDif >= desde && fechaDif <= hasta) {
-          var difUsd = limpiarNumero(dataDif[d][7]);
-          var tasaCierre = limpiarNumero(dataDif[d][3]);
-          resultado.perdidaCambiariaUSD += difUsd;
-          resultado.perdidaCambiariaBs += (difUsd * tasaCierre);
-        }
-      }
-    }
-  }
-
-  resultado.ventasNetas = resultado.ventas - resultado.comisiones;
-  
-  // GANANCIA REAL: Ventas Netas - Gastos Operativos - Pérdida Cambiaria
-  resultado.ganancia = resultado.ventasNetas - resultado.totalEgresos - resultado.perdidaCambiariaBs;
-  resultado.margen = resultado.ventasNetas > 0 ? (resultado.ganancia / resultado.ventasNetas) * 100 : 0;
-
-  return resultado;
-}
-
-function obtenerDetallePorCategoria(payload) {
-  var desde = "";
-  var hasta = "";
-  var categoriaBuscada = "";
-  if (payload) {
-    desde = (payload.fechaDesde || "").toString().trim();
-    hasta = (payload.fechaHasta || "").toString().trim();
-    categoriaBuscada = (payload.categoria || "").toString().trim().toUpperCase();
-  }
-  if (desde === "" || hasta === "") {
-    var hoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
-    desde = hoy;
-    hasta = hoy;
-  }
-  if (categoriaBuscada === "") {
-    return { status: "ERROR", mensaje: "Falta categoría", movimientos: [] };
-  }
-
-  var ss = obtenerSpreadsheet();
-  var sheetHist = ss.getSheetByName("HISTORIAL");
-  if (!sheetHist) return { status: "ERROR", movimientos: [] };
-
-  var lastRow = sheetHist.getLastRow();
-  if (lastRow < 2) return { status: "SUCCESS", movimientos: [], total: 0 };
-
-  var tz = "America/Caracas";
-  var data = sheetHist.getRange(2, 1, lastRow - 1, 16).getValues();
-  var lista = [];
-  var total = 0;
-
-  for (var i = 0; i < data.length; i++) {
-    var row = data[i];
-    var idTx = row[0] ? row[0].toString().trim().toUpperCase() : "";
-    if (idTx.indexOf("TX-") !== 0) continue;
-
-    var f = "";
-    try {
-      var vf = row[1];
-      f = _normalizarFecha(vf, tz);
-    } catch (e) { continue; }
-
-    if (f === "" || f < desde || f > hasta) continue;
-
-    var categoria = row[12] ? row[12].toString().toUpperCase() : "";
-    var tipo = row[2] ? row[2].toString().toUpperCase() : "";
-
-    var coincide = false;
-    if (categoriaBuscada === "NOMINA") {
-      coincide = tipo.indexOf("NOMINA") !== -1 || tipo.indexOf("LIQUIDACION") !== -1;
-    } else {
-      coincide = categoria === categoriaBuscada;
-    }
-    if (!coincide) continue;
-
-    var monto = limpiarNumero(row[5]);
-    var montoNeto = limpiarNumero(row[7]);
-    var comision = limpiarNumero(row[8]);
-    var neto = montoNeto > 0 ? montoNeto : monto;
-
-    total += neto;
-    lista.push({
-      idTx: idTx, fecha: f, tipo: tipo,
-      origen: row[3] ? row[3].toString() : "",
-      destino: row[4] ? row[4].toString() : "",
-      concepto: row[9] ? row[9].toString() : "",
-      monto: monto, montoNeto: montoNeto, comision: comision,
-      categoria: categoria
-    });
-  }
-
-  return {
-    status: "SUCCESS", categoria: categoriaBuscada,
-    fechaDesde: desde, fechaHasta: hasta,
-    movimientos: lista, total: total, cantidad: lista.length
-  };
-}
 
 function obtenerDetalleCierre(payload) {
   var idCierre = "";
@@ -3514,4 +3344,107 @@ function _resolverTasas(payload) {
     }
   }
   return { tasaUSD: tasaUSD, tasaUSDT: tasaUSDT };
+}
+
+function _calcularEstadisticasRango(desde, hasta) {
+  var ss = obtenerSpreadsheet();
+  var sheetHist = ss.getSheetByName("HISTORIAL");
+  var sheetDif = ss.getSheetByName("DIFERENCIAS_CAMBIARIAS");
+  
+  var resultado = {
+    ventas: 0, comisiones: 0, ventasNetas: 0,
+    proveedores: 0, personal: 0, nomina: 0, servicios: 0, otros: 0, comprasDivisa: 0,
+    totalEgresos: 0, gastosNoOperativos: 0, // <--- NUEVO
+    perdidaCambiariaUSD: 0, perdidaCambiariaBs: 0,
+    ganancia: 0, margen: 0, movimientos: 0
+  };
+  
+  if (!sheetHist) return resultado;
+  var lastRow = sheetHist.getLastRow();
+  if (lastRow < 2) return resultado;
+
+  var tz = "America/Caracas";
+  var data = sheetHist.getRange(2, 1, lastRow - 1, 16).getValues();
+
+  for (var i = 0; i < data.length; i++) {
+    var row = data[i];
+    var idTx = row[0] ? row[0].toString().trim().toUpperCase() : "";
+    if (idTx.indexOf("TX-") !== 0) continue;
+
+    var f = _normalizarFecha(row[1], tz);
+    if (f === "" || f < desde || f > hasta) continue;
+
+    resultado.movimientos++;
+    var tipo = row[2] ? row[2].toString().toUpperCase() : "";
+    var monto = limpiarNumero(row[5]);
+    var montoNeto = limpiarNumero(row[7]);
+    var comision = limpiarNumero(row[8]);
+    var categoria = row[12] ? row[12].toString().toUpperCase() : "";
+
+    var esIngreso = tipo.indexOf("INGRESO") === 0 || tipo.indexOf("CIERRE_POS") === 0 || tipo.indexOf("CIERRE_PAGO_MOVIL") === 0;
+
+    if (esIngreso) {
+      resultado.ventas += (montoNeto > 0 ? montoNeto : monto);
+    } else {
+      var neto = montoNeto > 0 ? montoNeto : monto;
+      if (tipo.indexOf("TRASPASO") === 0) continue;
+
+      // 1. EXCLUIMOS PRÉSTAMOS (Son activos)
+      if (tipo.indexOf("PRESTAMO") === 0 || categoria === "PRESTAMO_TRABAJADOR") continue;
+      
+      // 2. COMPRA DE DIVISAS
+      if (tipo.indexOf("COMPRA_DIVISA") === 0) {
+        resultado.comprasDivisa += monto;
+      } 
+      // 3. AQUI ESTA LA MAGIA: GASTOS NO OPERATIVOS
+      else if (categoria === "GASTO_FINANCIERO" || categoria === "IMPUESTOS" || categoria === "AJUSTE_CAJA" || categoria === "RETIRO_DUENO" || categoria === "GASTOS_PERSONALES") {
+        resultado.gastosNoOperativos += neto;
+      } 
+      // 4. GASTOS OPERATIVOS REALES
+      else if (tipo.indexOf("NOMINA") !== -1 || tipo.indexOf("LIQUIDACION") !== -1) {
+        resultado.nomina += neto;
+        resultado.totalEgresos += neto;
+      } else if (categoria === "PERSONAL") {
+        resultado.personal += neto;
+        resultado.totalEgresos += neto;
+      } else if (categoria === "PROVEEDORES" || categoria === "PAGO A PROVEEDORES") {
+        resultado.proveedores += neto;
+        resultado.totalEgresos += neto;
+      } else if (categoria === "SERVICIOS" || categoria === "SERVICIOS BÁSICOS" || categoria === "ALQUILER") {
+        resultado.servicios += neto;
+        resultado.totalEgresos += neto;
+      } else {
+        resultado.otros += neto;
+        resultado.totalEgresos += neto;
+      }
+    }
+    resultado.comisiones += comision;
+  }
+
+  if (sheetDif) {
+    var lastDif = sheetDif.getLastRow();
+    if (lastDif >= 2) {
+      var dataDif = sheetDif.getRange(2, 1, lastDif - 1, 8).getValues();
+      for (var d = 0; d < dataDif.length; d++) {
+        var fechaDif = _normalizarFecha(dataDif[d][1], tz);
+        if (fechaDif >= desde && fechaDif <= hasta) {
+          var difUsd = limpiarNumero(dataDif[d][7]);
+          var tasaCierre = limpiarNumero(dataDif[d][3]);
+          resultado.perdidaCambiariaUSD += difUsd;
+          resultado.perdidaCambiariaBs += (difUsd * tasaCierre);
+        }
+      }
+    }
+  }
+
+  resultado.ventasNetas = resultado.ventas - resultado.comisiones;
+  
+  // GANANCIA REAL: Solo se restan gastos operativos y pérdida cambiaria
+  resultado.ganancia = resultado.ventasNetas - resultado.totalEgresos - resultado.perdidaCambiariaBs;
+  resultado.margen = resultado.ventasNetas > 0 ? (resultado.ganancia / resultado.ventasNetas) * 100 : 0;
+
+  return resultado;
+}
+function probarReporte() {
+  Logger.log(JSON.stringify(_calcularEstadisticasRango("2026-11-01", "2026-11-05")));
 }
