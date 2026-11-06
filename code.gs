@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 02-11-26 2.27pm
+// Versión: 3.727 MODIFICADO DEEP 06-11-26 3.57pm
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -3411,7 +3411,7 @@ function _calcularEstadisticasRango(desde, hasta) {
     var concepto = row[9] ? row[9].toString().toUpperCase() : "";
     var categoria = row[12] ? row[12].toString().toUpperCase() : "";
 
-        var esIngreso = tipo.indexOf("INGRESO") === 0 || tipo.indexOf("CIERRE") === 0;
+    var esIngreso = tipo.indexOf("INGRESO") === 0 || tipo.indexOf("CIERRE") === 0;
 
     if (esIngreso) {
       // SOLO contamos como venta si es un CIERRE o si es un INGRESO categorizado explícitamente como VENTA
@@ -3419,7 +3419,6 @@ function _calcularEstadisticasRango(desde, hasta) {
                         (tipo === "INGRESO" && (categoria === "VENTA" || categoria === "VENTAS"));
       
       if (esVentaReal) {
-        // En la hoja, montoNeto ya está en Bs. Sumamos la comisión para obtener el Bruto real.
         var brutoBs = (montoNeto > 0 ? montoNeto : monto) + comision;
         resultado.ventas += brutoBs;
         resultado.comisiones += comision;
@@ -3438,12 +3437,15 @@ function _calcularEstadisticasRango(desde, hasta) {
       // 2. EXCLUIMOS EL GASTO DE LA COMISIÓN DEL CIERRE PARA NO DOBLE CONTAR
       if (categoria === "GASTOS_BANCARIOS" && concepto.indexOf("COMISIÓN CIERRE") !== -1) continue;
       
-      // 3. COMPRA DE DIVISAS
+      // 3. COMPRA DE DIVISAS (P2P): No es egreso, es cambio de activo. No afecta la ganancia.
       if (tipo.indexOf("COMPRA_DIVISA") === 0) {
-        resultado.comprasDivisa += monto;
+        // Solo registramos la comisión bancaria como gasto si existiera
+        if (comision > 0) resultado.gastosNoOperativos += comision;
+        continue; // Sale del bucle sin sumar a totalEgresos
       } 
+      
       // 4. GASTOS NO OPERATIVOS
-      else if (categoria === "GASTO_FINANCIERO" || categoria === "IMPUESTOS" || categoria === "AJUSTE_CAJA" || categoria === "RETIRO_DUENO" || categoria === "GASTOS_PERSONALES") {
+      if (categoria === "GASTO_FINANCIERO" || categoria === "IMPUESTOS" || categoria === "AJUSTE_CAJA" || categoria === "RETIRO_DUENO" || categoria === "GASTOS_PERSONALES") {
         resultado.gastosNoOperativos += neto;
       } 
       // 5. GASTOS OPERATIVOS REALES
@@ -3483,6 +3485,8 @@ function _calcularEstadisticasRango(desde, hasta) {
   }
 
   resultado.ventasNetas = resultado.ventas - resultado.comisiones;
+  // La ganancia se calcula SOLO con egresos operativos reales y pérdida cambiaria.
+  // Las compras de divisas ya fueron ignoradas en el bucle.
   resultado.ganancia = resultado.ventasNetas - resultado.totalEgresos - resultado.perdidaCambiariaBs;
   resultado.margen = resultado.ventasNetas > 0 ? (resultado.ganancia / resultado.ventasNetas) * 100 : 0;
 
