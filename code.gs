@@ -969,7 +969,8 @@ function registrarCierreJornada(payload) {
     } catch (e) {}
   }
   var fechaOp = Utilities.formatDate(fechaCierre, "America/Caracas", "yyyy-MM-dd");
-    // === AUTO-CÁLCULO DE GASTOS Y PRÉSTAMOS DESDE LA VENTA DEL DÍA ===
+  
+  // === AUTO-CÁLCULO DE GASTOS Y PRÉSTAMOS DESDE LA VENTA DEL DÍA ===
   var totalVentaDiaUsado = 0;
   var histCheck = sheetHistorial.getDataRange().getValues();
   for (var hc = 1; hc < histCheck.length; hc++) {
@@ -1129,7 +1130,7 @@ function registrarCierreJornada(payload) {
         tasaBCV, tasaUSDT,
         comision > 0 ? "COMISIONES" : "VENTAS",
         "S", "ACUMULADO", idCierre,
-        tasaBCV, "BCV", equivBsItem
+        tasaBCV, "BCV", montoBsPos // <-- CORREGIDO
       ]);
     }
 
@@ -1141,7 +1142,8 @@ function registrarCierreJornada(payload) {
         it.pagoMovil, it.moneda, equivPm, 0,
         "CIERRE PAGO MÓVIL - " + it.cuenta + " | Monto: " + it.pagoMovil.toFixed(2) + marcaIdemp,
         tasaBCV, tasaUSDT, "VENTAS",
-        "S", "ACUMULADO", idCierre
+        "S", "ACUMULADO", idCierre,
+        tasaBCV, "BCV", equivPm // <-- CORREGIDO
       ]);
     }
 
@@ -1152,7 +1154,8 @@ function registrarCierreJornada(payload) {
         idTxCom, fechaCierre, "GASTO", "Gastos Bancarios", "",
         comision, it.moneda, comBs, 0,
         "Comisión cierre " + it.cuenta + " — " + fechaOp + marcaIdemp,
-        tasaBCV, tasaUSDT, "GASTOS_BANCARIOS", "S", "ACUMULADO", idCierre
+        tasaBCV, tasaUSDT, "GASTOS_BANCARIOS", "S", "ACUMULADO", idCierre,
+        tasaBCV, "BCV", comBs // <-- CORREGIDO
       ]);
       actualizarSaldoEnHojaSaldos(sheetSaldos, "Gastos Bancarios", comision, true);
     }
