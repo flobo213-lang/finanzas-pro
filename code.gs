@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 02-11-26 2.35pm
+// Versión: 3.727 MODIFICADO DEEP 02-11-26 2.27pm
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -950,7 +950,6 @@ function guardarDiferenciaCambiaria(idCierre, fechaCierre, montoBs) {
 // ============================================================================
 // 6. CIERRE DE JORNADA
 // ============================================================================
-
 function registrarCierreJornada(payload) {
   var ss = obtenerSpreadsheet();
   var sheetHistorial = ss.getSheetByName("HISTORIAL");
@@ -969,7 +968,8 @@ function registrarCierreJornada(payload) {
     } catch (e) {}
   }
   var fechaOp = Utilities.formatDate(fechaCierre, "America/Caracas", "yyyy-MM-dd");
-    // === AUTO-CÁLCULO DE GASTOS Y PRÉSTAMOS DESDE LA VENTA DEL DÍA ===
+  
+  // === AUTO-CÁLCULO DE GASTOS Y PRÉSTAMOS DESDE LA VENTA DEL DÍA ===
   var totalVentaDiaUsado = 0;
   var histCheck = sheetHistorial.getDataRange().getValues();
   for (var hc = 1; hc < histCheck.length; hc++) {
@@ -977,12 +977,10 @@ function registrarCierreJornada(payload) {
     var fechaHC = _normalizarFecha(rowHC[1], "America/Caracas");
     var origenHC = (rowHC[14] || "ACUMULADO").toString().toUpperCase();
     
-    // Si es de HOY y salió de la Venta del Día
     if (fechaHC === fechaOp && origenHC === "VENTA_DIA") {
       var tipoHC = (rowHC[2] || "").toString().toUpperCase();
-      // Sumamos egresos y préstamos, pero no los traspasos internos
       if (tipoHC.indexOf("EGRESO") !== -1 || tipoHC.indexOf("PRESTAMO") !== -1 || tipoHC.indexOf("GASTO") !== -1) {
-        var montoHC = limpiarNumero(rowHC[5]); // Columna F (MONTO)
+        var montoHC = limpiarNumero(rowHC[5]);
         totalVentaDiaUsado += montoHC;
       }
     }
@@ -1129,7 +1127,7 @@ function registrarCierreJornada(payload) {
         tasaBCV, tasaUSDT,
         comision > 0 ? "COMISIONES" : "VENTAS",
         "S", "ACUMULADO", idCierre,
-        tasaBCV, "BCV", equivBsItem
+        tasaBCV, "BCV", montoBsPos
       ]);
     }
 
@@ -1141,7 +1139,8 @@ function registrarCierreJornada(payload) {
         it.pagoMovil, it.moneda, equivPm, 0,
         "CIERRE PAGO MÓVIL - " + it.cuenta + " | Monto: " + it.pagoMovil.toFixed(2) + marcaIdemp,
         tasaBCV, tasaUSDT, "VENTAS",
-        "S", "ACUMULADO", idCierre
+        "S", "ACUMULADO", idCierre,
+        tasaBCV, "BCV", equivPm
       ]);
     }
 
@@ -1152,7 +1151,8 @@ function registrarCierreJornada(payload) {
         idTxCom, fechaCierre, "GASTO", "Gastos Bancarios", "",
         comision, it.moneda, comBs, 0,
         "Comisión cierre " + it.cuenta + " — " + fechaOp + marcaIdemp,
-        tasaBCV, tasaUSDT, "GASTOS_BANCARIOS", "S", "ACUMULADO", idCierre
+        tasaBCV, tasaUSDT, "GASTOS_BANCARIOS", "S", "ACUMULADO", idCierre,
+        tasaBCV, "BCV", comBs
       ]);
       actualizarSaldoEnHojaSaldos(sheetSaldos, "Gastos Bancarios", comision, true);
     }
@@ -1172,9 +1172,37 @@ function registrarCierreJornada(payload) {
   var gastos = _r2(limpiarNumero(payload.gastos || 0));
   var prestamos = _r2(limpiarNumero(payload.prestamos || 0));
 
-  // Ahora el backend resta automáticamente lo que se usó de la Venta del Día
+  // === PROCESAR PRÉSTAMOS DESDE EL CIERRE ===
+  if (payload.gastosVenta && Array.isArray(payload.gastosVenta)) {
+    var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL");
+    if (sheetTrab) {
+      var dataT = sheetTrab.getDataRange().getValues();
+      
+      for (var g = 0; g < payload.gastosVenta.length; g++) {
+        var gasto = payload.gastosVenta[g];
+        
+        if (gasto.categoria === "PRESTAMO_TRABAJADOR" && gasto.cedula) {
+          var cedulaClean = gasto.cedula.toString().replace(/[^0-9]/g, "");
+          var montoBs = limpiarNumero(gasto.monto || 0);
+          var montoUSD = tasaBCV > 0 ? _r2(montoBs / tasaBCV) : 0;
+
+          for (var t = 1; t < dataT.length; t++) {
+            var cedFila = (dataT[t][2] || dataT[t][0] || "").toString().replace(/[^0-9]/g, "");
+            if (cedFila === cedulaClean) {
+              var deudaActual = limpiarNumero(dataT[t][9] || 0);
+              var nuevaDeuda = _r2(deudaActual + montoUSD);
+              sheetTrab.getRange(t + 1, 10).setValue(nuevaDeuda);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+  // === FIN PRÉSTAMOS ===
+
   var diferencia = _r2(ventaTotal - distribuido - comisiones - totalVentaDiaUsado);
-  var descuadreBs = _r2(diferencia); // El backend impone su cálculo
+  var descuadreBs = _r2(diferencia);
   var estadoCierre = diferencia < 0 ? "FALTANTE" : "CERRADO";
 
   if (sheetCierres) {
@@ -1212,7 +1240,8 @@ function registrarCierreJornada(payload) {
         idTxAuto, fechaCierre, "EGRESO", cuentaAjuste, "VARIAS",
         montoAuto, "BS", montoAuto, 0,
         conceptoAuto,
-        tasaBCV, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre
+        tasaBCV, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre,
+        tasaBCV, "BCV", montoAuto // <--- COLUMNAS 19 CORREGIDAS
       ]);
     } else {
       actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaAjuste, montoAuto, true);
@@ -1220,7 +1249,8 @@ function registrarCierreJornada(payload) {
         idTxAuto, fechaCierre, "INGRESO", "VARIAS", cuentaAjuste,
         montoAuto, "BS", montoAuto, 0,
         conceptoAuto,
-        tasaBCV, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre
+        tasaBCV, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre,
+        tasaBCV, "BCV", montoAuto // <--- COLUMNAS 19 CORREGIDAS
       ]);
     }
   }
@@ -1659,27 +1689,26 @@ function registrarOperacion(payload) {
         else comisionNativa = comisionBs;
       }
       if (montoNat > 0) {
-        // === NUEVO: solo validar y actualizar saldo si NO es informativo ===
         if (!noAfectaSaldo) {
           var saldoD = obtenerSaldoCuenta(sheetSaldos, ctaD);
           var requerido = montoNat + (k === 0 ? comisionNativa : 0);
           
           if (saldoD < requerido) {
-            // AUTO-ASIGNACIÓN: Tomar el faltante de la Venta del Día
             origenFondos = "VENTA_DIA"; 
-            actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, saldoD, false); // Deja la cuenta en 0
+            actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, saldoD, false);
           } else {
             actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, montoNat, false);
           }
         }
-        cuentasTxt.push(ctaD + ": " + montoNat.toFixed(2) + " " + monedaNat);
+        // AQUI EL CAMBIO: Solo guardamos el nombre de la cuenta para el ORIGEN
+        cuentasTxt.push(ctaD); 
       }
     }
     cuentaSalida = cuentasTxt.join(" | ");
 
     if (comisionNativa > 0 && cuentaComision !== "" && !noAfectaSaldo) {
       actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaComision, comisionNativa, false);
-      cuentaSalida += " | Comisión: " + comisionNativa.toFixed(2);
+      // ELIMINAMOS ESTA LÍNEA: cuentaSalida += " | Comisión: " + comisionNativa.toFixed(2);
     }
   } else {
     // === NUEVO: mismo flag aplica a ruta sin desglose ===
@@ -2180,7 +2209,7 @@ function registrarIngreso(payload) {
       var monedaNat = (it.moneda || "BS").toString().toUpperCase();
       if (montoNat > 0) {
         actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, montoNat, true);
-        cuentasTxt.push(ctaD + ": +" + montoNat.toFixed(2) + " " + monedaNat);
+        cuentasTxt.push(ctaD);
       }
     }
     cuentaDestino = cuentasTxt.join(" | ");
@@ -3354,7 +3383,7 @@ function _calcularEstadisticasRango(desde, hasta) {
   var resultado = {
     ventas: 0, comisiones: 0, ventasNetas: 0,
     proveedores: 0, personal: 0, nomina: 0, servicios: 0, otros: 0, comprasDivisa: 0,
-    totalEgresos: 0, gastosNoOperativos: 0, // <--- NUEVO
+    totalEgresos: 0, gastosNoOperativos: 0,
     perdidaCambiariaUSD: 0, perdidaCambiariaBs: 0,
     ganancia: 0, margen: 0, movimientos: 0
   };
@@ -3379,29 +3408,43 @@ function _calcularEstadisticasRango(desde, hasta) {
     var monto = limpiarNumero(row[5]);
     var montoNeto = limpiarNumero(row[7]);
     var comision = limpiarNumero(row[8]);
+    var concepto = row[9] ? row[9].toString().toUpperCase() : "";
     var categoria = row[12] ? row[12].toString().toUpperCase() : "";
 
-    var esIngreso = tipo.indexOf("INGRESO") === 0 || tipo.indexOf("CIERRE_POS") === 0 || tipo.indexOf("CIERRE_PAGO_MOVIL") === 0;
+    var esIngreso = tipo.indexOf("INGRESO") === 0 || tipo.indexOf("CIERRE") === 0;
 
     if (esIngreso) {
-      resultado.ventas += (montoNeto > 0 ? montoNeto : monto);
+      if (tipo.indexOf("CIERRE") === 0) {
+        // Para cierres: el bruto es monto + comision
+        resultado.ventas += (monto + comision); 
+        resultado.comisiones += comision;
+      } else {
+        resultado.ventas += (montoNeto > 0 ? montoNeto : monto);
+      }
     } else {
       var neto = montoNeto > 0 ? montoNeto : monto;
-      if (tipo.indexOf("TRASPASO") === 0) continue;
+      
+      if (tipo.indexOf("TRASPASO") === 0) {
+        resultado.gastosNoOperativos += comision; // Comisión de traspaso va a gasto financiero
+        continue;
+      }
 
-      // 1. EXCLUIMOS PRÉSTAMOS (Son activos)
+      // 1. EXCLUIMOS PRÉSTAMOS
       if (tipo.indexOf("PRESTAMO") === 0 || categoria === "PRESTAMO_TRABAJADOR") continue;
       
-      // 2. COMPRA DE DIVISAS
+      // 2. EXCLUIMOS EL GASTO DE LA COMISIÓN DEL CIERRE PARA NO DOBLE CONTAR
+      if (categoria === "GASTOS_BANCARIOS" && concepto.indexOf("COMISIÓN CIERRE") !== -1) continue;
+      
+      // 3. COMPRA DE DIVISAS
       if (tipo.indexOf("COMPRA_DIVISA") === 0) {
         resultado.comprasDivisa += monto;
       } 
-      // 3. AQUI ESTA LA MAGIA: GASTOS NO OPERATIVOS
+      // 4. GASTOS NO OPERATIVOS
       else if (categoria === "GASTO_FINANCIERO" || categoria === "IMPUESTOS" || categoria === "AJUSTE_CAJA" || categoria === "RETIRO_DUENO" || categoria === "GASTOS_PERSONALES") {
         resultado.gastosNoOperativos += neto;
       } 
-      // 4. GASTOS OPERATIVOS REALES
-      else if (tipo.indexOf("NOMINA") !== -1 || tipo.indexOf("LIQUIDACION") !== -1) {
+      // 5. GASTOS OPERATIVOS REALES
+      else if (tipo.indexOf("NOMINA") !== -1 || tipo.indexOf("LIQUIDACION") !== -1 || tipo.indexOf("PAGO_NOMINA") !== -1) {
         resultado.nomina += neto;
         resultado.totalEgresos += neto;
       } else if (categoria === "PERSONAL") {
@@ -3418,7 +3461,6 @@ function _calcularEstadisticasRango(desde, hasta) {
         resultado.totalEgresos += neto;
       }
     }
-    resultado.comisiones += comision;
   }
 
   if (sheetDif) {
@@ -3438,16 +3480,12 @@ function _calcularEstadisticasRango(desde, hasta) {
   }
 
   resultado.ventasNetas = resultado.ventas - resultado.comisiones;
-  
-  // GANANCIA REAL: Solo se restan gastos operativos y pérdida cambiaria
   resultado.ganancia = resultado.ventasNetas - resultado.totalEgresos - resultado.perdidaCambiariaBs;
   resultado.margen = resultado.ventasNetas > 0 ? (resultado.ganancia / resultado.ventasNetas) * 100 : 0;
 
   return resultado;
 }
-function probarReporte() {
-  Logger.log(JSON.stringify(_calcularEstadisticasRango("2026-11-01", "2026-11-05")));
-}
+
 function obtenerEstadisticas(payload) {
   var desde = "";
   var hasta = "";
