@@ -3411,15 +3411,18 @@ function _calcularEstadisticasRango(desde, hasta) {
     var concepto = row[9] ? row[9].toString().toUpperCase() : "";
     var categoria = row[12] ? row[12].toString().toUpperCase() : "";
 
-    var esIngreso = tipo.indexOf("INGRESO") === 0 || tipo.indexOf("CIERRE") === 0;
+        var esIngreso = tipo.indexOf("INGRESO") === 0 || tipo.indexOf("CIERRE") === 0;
 
     if (esIngreso) {
-      if (tipo.indexOf("CIERRE") === 0) {
-        // Para cierres: el bruto es monto + comision
-        resultado.ventas += (monto + comision); 
+      // SOLO contamos como venta si es un CIERRE o si es un INGRESO categorizado explícitamente como VENTA
+      var esVentaReal = (tipo.indexOf("CIERRE") === 0) || 
+                        (tipo === "INGRESO" && (categoria === "VENTA" || categoria === "VENTAS"));
+      
+      if (esVentaReal) {
+        // En la hoja, montoNeto ya está en Bs. Sumamos la comisión para obtener el Bruto real.
+        var brutoBs = (montoNeto > 0 ? montoNeto : monto) + comision;
+        resultado.ventas += brutoBs;
         resultado.comisiones += comision;
-      } else {
-        resultado.ventas += (montoNeto > 0 ? montoNeto : monto);
       }
     } else {
       var neto = montoNeto > 0 ? montoNeto : monto;
