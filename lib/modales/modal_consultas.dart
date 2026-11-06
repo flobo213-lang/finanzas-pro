@@ -106,8 +106,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
         "obtenerEstadisticas",
         {"fechaDesde": desde, "fechaHasta": hasta},
       );
-      print("=== RESPUESTA ESTADISTICAS ===");
-      print(resEst);
       if (!mounted) return;
       setState(() => _estadisticas = resEst);
 
@@ -556,7 +554,7 @@ class _ModalConsultasState extends State<ModalConsultas> {
                 (ant['movimientos'] as num?)?.toDouble() ?? 0,
                 0,
                 Colors.grey.shade700,
-                esMoneda: false), // <--- AGREGA ESTO
+                esMoneda: false),
           ]),
         ],
       ),
@@ -590,7 +588,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
   Widget _filaComp(
       String label, double monto, double montoAnt, double pct, Color color,
       {bool bold = false, bool esMoneda = true}) {
-    // <--- AGREGA ESTO
     final pctEsPositivo = pct >= 0;
     final colorPct =
         pctEsPositivo ? Colors.green.shade700 : Colors.red.shade700;
@@ -612,10 +609,7 @@ class _ModalConsultasState extends State<ModalConsultas> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text(
-                    esMoneda
-                        ? '${_fmt.format(monto)} Bs'
-                        : '${monto.toInt()}', // <--- CAMBIO AQUI
+                Text(esMoneda ? '${_fmt.format(monto)} Bs' : '${monto.toInt()}',
                     style: TextStyle(
                         fontSize: bold ? 11.5 : 10.5,
                         fontWeight: FontWeight.bold,
@@ -960,7 +954,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
   }
 
   Widget _buildBloqueCuenta(Map<dynamic, dynamic> c) {
-    // Lee tasaUSD desde la raíz del response (fallback: de la cuenta)
     final tasaRoot = (_conciliacion!['tasaUSD'] as num?)?.toDouble() ?? 0;
     final tasaCuenta = (c['tasaUSD'] as num?)?.toDouble() ?? 0;
     final tasaConsulta = tasaRoot > 0 ? tasaRoot : tasaCuenta;
@@ -1050,7 +1043,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
                   _limpiarConcepto((m['concepto'] ?? '').toString());
               final fecha = (m['fecha'] ?? '').toString();
               final esIngreso = signo > 0;
-              // Tasa del movimiento si viene, si no la global
               final tasaMov =
                   (m['tasaUSD'] as num?)?.toDouble() ?? tasaConsulta;
               double aUsdMov(double bs) => tasaMov > 0 ? bs / tasaMov : 0;
@@ -1088,7 +1080,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
                       crossAxisAlignment: CrossAxisAlignment.end,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Sin guion, solo color según signo
                         Text('${_fmt.format(monto)} Bs',
                             style: TextStyle(
                                 fontSize: 10,
@@ -1127,7 +1118,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
             children: [
               const Text("Total egresos:",
                   style: TextStyle(fontSize: 10, color: Colors.red)),
-              // Sin guion
               Text("${_fmt.format(egresos)} Bs",
                   style: const TextStyle(
                       fontSize: 10,
@@ -1223,7 +1213,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
             (m['monto'] as num?)?.toDouble() ??
             0;
 
-        // Parseo
         final conceptoRaw = m['concepto']?.toString() ?? '';
         String titulo;
         String cuentaOrigen;
@@ -1254,7 +1243,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Fecha + Tipo (badge)
                     Row(
                       children: [
                         Container(
@@ -1281,13 +1269,11 @@ class _ModalConsultasState extends State<ModalConsultas> {
                       ],
                     ),
                     const SizedBox(height: 2),
-                    // Concepto limpio
                     Text(titulo,
                         style: const TextStyle(
                             fontSize: 10.5, fontWeight: FontWeight.bold),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis),
-                    // Cuenta origen
                     Row(
                       children: [
                         Icon(Icons.account_balance,
@@ -1495,7 +1481,7 @@ class _ModalConsultasState extends State<ModalConsultas> {
   }
 
   // ============================================================
-  // PDF
+  // PDF GENERAL
   // ============================================================
   Future<void> _imprimirPDF() async {
     final doc = pw.Document();
@@ -1530,6 +1516,12 @@ class _ModalConsultasState extends State<ModalConsultas> {
           if (_vista == 'RESUMEN' && _estadisticas != null) ...[
             ..._pdfBloqueResumen(),
           ],
+          if (_vista == 'CATEGORIAS' && _estadisticas != null) ...[
+            ..._pdfBloqueCategorias(),
+          ],
+          if (_vista == 'MOVIMIENTOS' && _movimientos != null) ...[
+            ..._pdfBloqueMovimientos(),
+          ],
           if (_vista == 'CONCILIACION' && _conciliacion != null) ...[
             ..._pdfBloqueConciliacion(),
           ],
@@ -1541,21 +1533,298 @@ class _ModalConsultasState extends State<ModalConsultas> {
 
   List<pw.Widget> _pdfBloqueResumen() {
     final act = _estadisticas!['actual'] as Map? ?? {};
+    final ant = _estadisticas!['anterior'] as Map? ?? {};
+    final var_ = _estadisticas!['variaciones'] as Map? ?? {};
+
+    final colorVerde = PdfColor.fromHex('#2E7D32');
+    final colorRojo = PdfColor.fromHex('#C62828');
+    final colorNaranja = PdfColor.fromHex('#EF6C00');
+    final colorAzul = PdfColor.fromHex('#1565C0');
+    final colorNegro = PdfColors.black;
+    final colorGris = PdfColors.grey700;
+
     return [
       pw.Text("RESUMEN",
           style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
       pw.SizedBox(height: 8),
-      _pdfFila('Ventas', (act['ventas'] as num?)?.toDouble() ?? 0),
-      _pdfFila('Comisiones', (act['comisiones'] as num?)?.toDouble() ?? 0),
-      _pdfFila('Ventas netas', (act['ventasNetas'] as num?)?.toDouble() ?? 0),
-      _pdfFila('Proveedores', (act['proveedores'] as num?)?.toDouble() ?? 0),
-      _pdfFila('Personal', (act['personal'] as num?)?.toDouble() ?? 0),
-      _pdfFila('Nómina', (act['nomina'] as num?)?.toDouble() ?? 0),
-      _pdfFila('Servicios', (act['servicios'] as num?)?.toDouble() ?? 0),
-      _pdfFila('Total egresos', (act['totalEgresos'] as num?)?.toDouble() ?? 0),
+      _pdfFila('Ventas brutas', (act['ventas'] as num?)?.toDouble() ?? 0,
+          (var_['ventas'] as num?)?.toDouble() ?? 0, colorVerde,
+          ant: (ant['ventas'] as num?)?.toDouble() ?? 0),
+      _pdfFila('Comisiones', (act['comisiones'] as num?)?.toDouble() ?? 0,
+          (var_['comisiones'] as num?)?.toDouble() ?? 0, colorNaranja,
+          ant: (ant['comisiones'] as num?)?.toDouble() ?? 0),
+      _pdfFila('Ventas netas', (act['ventasNetas'] as num?)?.toDouble() ?? 0, 0,
+          colorNegro,
+          bold: true, ant: (ant['ventasNetas'] as num?)?.toDouble() ?? 0),
       pw.Divider(),
-      _pdfFila('GANANCIA', (act['ganancia'] as num?)?.toDouble() ?? 0),
+      _pdfFila('Proveedores', (act['proveedores'] as num?)?.toDouble() ?? 0,
+          (var_['proveedores'] as num?)?.toDouble() ?? 0, colorNaranja,
+          ant: (ant['proveedores'] as num?)?.toDouble() ?? 0),
+      _pdfFila('Personal', (act['personal'] as num?)?.toDouble() ?? 0,
+          (var_['personal'] as num?)?.toDouble() ?? 0, colorRojo,
+          ant: (ant['personal'] as num?)?.toDouble() ?? 0),
+      _pdfFila('Nómina', (act['nomina'] as num?)?.toDouble() ?? 0,
+          (var_['nomina'] as num?)?.toDouble() ?? 0, colorRojo,
+          ant: (ant['nomina'] as num?)?.toDouble() ?? 0),
+      _pdfFila('Servicios', (act['servicios'] as num?)?.toDouble() ?? 0,
+          (var_['servicios'] as num?)?.toDouble() ?? 0, colorAzul,
+          ant: (ant['servicios'] as num?)?.toDouble() ?? 0),
+      _pdfFila('Otros', (act['otros'] as num?)?.toDouble() ?? 0, 0, colorGris,
+          ant: (ant['otros'] as num?)?.toDouble() ?? 0),
+      _pdfFila('Total egresos', (act['totalEgresos'] as num?)?.toDouble() ?? 0,
+          (var_['egresos'] as num?)?.toDouble() ?? 0, colorRojo,
+          bold: true, ant: (ant['totalEgresos'] as num?)?.toDouble() ?? 0),
+      pw.Divider(),
+      _pdfFila(
+          'GANANCIA',
+          (act['ganancia'] as num?)?.toDouble() ?? 0,
+          (var_['ganancia'] as num?)?.toDouble() ?? 0,
+          ((act['ganancia'] as num?)?.toDouble() ?? 0) >= 0
+              ? colorVerde
+              : colorRojo,
+          bold: true,
+          ant: (ant['ganancia'] as num?)?.toDouble() ?? 0),
+      _pdfFilaPorcentaje(
+          'Margen', (act['margen'] as num?)?.toDouble() ?? 0, colorGris),
+      _pdfFila('Movimientos', (act['movimientos'] as num?)?.toDouble() ?? 0, 0,
+          colorGris,
+          esMoneda: false),
     ];
+  }
+
+  List<pw.Widget> _pdfBloqueCategorias() {
+    if (_estadisticas == null) return [];
+    final act = _estadisticas!['actual'] as Map? ?? {};
+    List<pw.Widget> widgets = [
+      pw.Text("RESUMEN POR CATEGORÍAS",
+          style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
+      pw.SizedBox(height: 8),
+      _pdfFila('Proveedores', (act['proveedores'] as num?)?.toDouble() ?? 0, 0,
+          PdfColor.fromHex('#EF6C00')),
+      _pdfFila('Personal', (act['personal'] as num?)?.toDouble() ?? 0, 0,
+          PdfColor.fromHex('#C62828')),
+      _pdfFila('Nómina', (act['nomina'] as num?)?.toDouble() ?? 0, 0,
+          PdfColor.fromHex('#C62828')),
+      _pdfFila('Servicios', (act['servicios'] as num?)?.toDouble() ?? 0, 0,
+          PdfColor.fromHex('#1565C0')),
+      _pdfFila('Otros', (act['otros'] as num?)?.toDouble() ?? 0, 0,
+          PdfColors.grey700),
+      pw.Divider(),
+    ];
+
+    if (_categoriaDetalle != null && _detalleCategoria.isNotEmpty) {
+      widgets.add(pw.SizedBox(height: 10));
+      widgets.add(pw.Text("DETALLE: $_categoriaDetalle",
+          style: pw.TextStyle(
+              fontSize: 10,
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColor.fromHex('#0F52BA'))));
+      widgets.add(pw.SizedBox(height: 6));
+
+      for (var m in _detalleCategoria) {
+        final tipo = (m['tipo'] ?? '').toString().toUpperCase();
+        final monto = (m['montoNeto'] as num?)?.toDouble() ??
+            (m['monto'] as num?)?.toDouble() ??
+            0;
+        final montoUsd = widget.tasaUSD > 0 ? monto / widget.tasaUSD : 0;
+        final concepto = _limpiarConcepto((m['concepto'] ?? '').toString());
+        final fecha = (m['fecha'] ?? '').toString();
+
+        widgets.add(pw.Container(
+            padding: const pw.EdgeInsets.symmetric(vertical: 3),
+            decoration: const pw.BoxDecoration(
+                border: pw.Border(
+                    bottom:
+                        pw.BorderSide(color: PdfColors.grey300, width: 0.5))),
+            child: pw.Row(children: [
+              pw.SizedBox(
+                  width: 50,
+                  child:
+                      pw.Text(fecha, style: const pw.TextStyle(fontSize: 8))),
+              pw.Expanded(
+                  child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                    pw.Text(concepto,
+                        style: const pw.TextStyle(
+                            fontSize: 8, fontWeight: pw.FontWeight.bold)),
+                    pw.Text(tipo.replaceAll('_', ' '),
+                        style: const pw.TextStyle(
+                            fontSize: 7, color: PdfColors.grey600)),
+                  ])),
+              pw.SizedBox(
+                  width: 80,
+                  child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.end,
+                      children: [
+                        pw.Text('${_fmt.format(monto)} Bs',
+                            style: const pw.TextStyle(
+                                fontSize: 8, fontWeight: pw.FontWeight.bold)),
+                        pw.Text('≈ \$ ${_fmt.format(montoUsd)}',
+                            style: const pw.TextStyle(
+                                fontSize: 7, color: PdfColors.grey700)),
+                      ]))
+            ])));
+      }
+    }
+    return widgets;
+  }
+
+  List<pw.Widget> _pdfBloqueMovimientos() {
+    if (_movimientos == null) return [];
+    final lista = List<dynamic>.from(_movimientos!['movimientos'] ?? []);
+    if (lista.isEmpty)
+      return [
+        pw.Text("Sin movimientos en el rango",
+            style: const pw.TextStyle(fontSize: 10))
+      ];
+
+    List<pw.Widget> widgets = [
+      pw.Text("LISTADO DE MOVIMIENTOS",
+          style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
+      pw.SizedBox(height: 8),
+    ];
+
+    for (var m in lista) {
+      final tipo = (m['tipo'] ?? '').toString().toUpperCase();
+      final esIngreso = tipo.contains('INGRESO') || tipo.contains('CIERRE');
+      final monto = (m['montoNeto'] as num?)?.toDouble() ??
+          (m['monto'] as num?)?.toDouble() ??
+          0;
+      final montoUsd = widget.tasaUSD > 0 ? monto / widget.tasaUSD : 0;
+      final concepto = _limpiarConcepto((m['concepto'] ?? '').toString());
+      final fecha = (m['fecha'] ?? '').toString();
+      final color =
+          esIngreso ? PdfColor.fromHex('#2E7D32') : PdfColor.fromHex('#C62828');
+
+      widgets.add(pw.Container(
+          padding: const pw.EdgeInsets.symmetric(vertical: 3),
+          decoration: const pw.BoxDecoration(
+              border: pw.Border(
+                  bottom: pw.BorderSide(color: PdfColors.grey300, width: 0.5))),
+          child: pw.Row(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.SizedBox(
+                    width: 50,
+                    child:
+                        pw.Text(fecha, style: const pw.TextStyle(fontSize: 8))),
+                pw.Expanded(
+                    child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                      pw.Text(tipo.replaceAll('_', ' '),
+                          style: pw.TextStyle(
+                              fontSize: 8,
+                              fontWeight: pw.FontWeight.bold,
+                              color: color)),
+                      pw.Text(concepto, style: const pw.TextStyle(fontSize: 8)),
+                    ])),
+                pw.SizedBox(
+                    width: 80,
+                    child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.end,
+                        children: [
+                          pw.Text(
+                              '${esIngreso ? '+' : '-'}${_fmt.format(monto)} Bs',
+                              style: pw.TextStyle(
+                                  fontSize: 8,
+                                  fontWeight: pw.FontWeight.bold,
+                                  color: color)),
+                          pw.Text('≈ \$ ${_fmt.format(montoUsd)}',
+                              style: pw.TextStyle(fontSize: 7, color: color)),
+                        ]))
+              ])));
+    }
+    return widgets;
+  }
+
+  pw.Widget _pdfFila(String label, double monto, double pct, PdfColor color,
+      {bool bold = false, bool esMoneda = true, double ant = 0}) {
+    final montoUsd =
+        (esMoneda && widget.tasaUSD > 0) ? monto / widget.tasaUSD : 0;
+    final pctEsPositivo = pct >= 0;
+    final colorPct = pctEsPositivo
+        ? PdfColor.fromHex('#2E7D32')
+        : PdfColor.fromHex('#C62828');
+    final iconoPct = pctEsPositivo ? '↑' : '↓';
+
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 3),
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Expanded(
+            flex: 3,
+            child: pw.Text(label,
+                style: pw.TextStyle(
+                    fontSize: bold ? 11 : 10,
+                    fontWeight:
+                        bold ? pw.FontWeight.bold : pw.FontWeight.normal)),
+          ),
+          pw.Expanded(
+            flex: 3,
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.end,
+              children: [
+                pw.Text(
+                  esMoneda ? '${_fmt.format(monto)} Bs' : '${monto.toInt()}',
+                  style: pw.TextStyle(
+                      fontSize: bold ? 11 : 10,
+                      fontWeight: pw.FontWeight.bold,
+                      color: color),
+                ),
+                if (esMoneda)
+                  pw.Text('≈ \$ ${_fmt.format(montoUsd)}',
+                      style: pw.TextStyle(
+                          fontSize: 8,
+                          color: color,
+                          fontWeight: pw.FontWeight.bold)),
+              ],
+            ),
+          ),
+          pw.SizedBox(width: 15),
+          pw.Expanded(
+            flex: 1,
+            child: (ant > 0 || monto > 0) &&
+                    label != 'Ventas netas' &&
+                    label != 'Otros' &&
+                    label != 'Movimientos'
+                ? pw.Text('$iconoPct ${pct.abs().toStringAsFixed(1)}%',
+                    textAlign: pw.TextAlign.right,
+                    style: pw.TextStyle(
+                        fontSize: 9,
+                        fontWeight: pw.FontWeight.bold,
+                        color: colorPct))
+                : pw.SizedBox(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  pw.Widget _pdfFilaPorcentaje(String label, double valor, PdfColor color) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 3),
+      child: pw.Row(
+        children: [
+          pw.Expanded(
+              flex: 3,
+              child: pw.Text(label, style: const pw.TextStyle(fontSize: 10))),
+          pw.Expanded(
+            flex: 3,
+            child: pw.Text('${valor.toStringAsFixed(1)} %',
+                textAlign: pw.TextAlign.right,
+                style: pw.TextStyle(
+                    fontSize: 10,
+                    fontWeight: pw.FontWeight.bold,
+                    color: color)),
+          ),
+          pw.SizedBox(width: 15),
+          pw.Expanded(flex: 1, child: pw.SizedBox()),
+        ],
+      ),
+    );
   }
 
   List<pw.Widget> _pdfBloqueConciliacion() {
@@ -1625,7 +1894,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
                       child: pw.Text("$fecha · $tipo · $concepto",
                           style: const pw.TextStyle(fontSize: 8), maxLines: 1),
                     ),
-                    // Sin signo, solo color
                     pw.Text(
                         "${_fmt.format(monto)} Bs ~ \$ ${_fmt.format(aUsd(monto))}",
                         style: pw.TextStyle(
@@ -1655,7 +1923,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
                 pw.Text("Total egresos:",
                     style: const pw.TextStyle(
                         fontSize: 9, color: PdfColors.red800)),
-                // Sin guion
                 pw.Text("${_fmt.format(egresos)} Bs",
                     style: const pw.TextStyle(
                         fontSize: 9, color: PdfColors.red800)),
@@ -1682,20 +1949,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
     }
 
     return items;
-  }
-
-  pw.Widget _pdfFila(String label, double monto) {
-    return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(vertical: 2),
-      child: pw.Row(
-        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-        children: [
-          pw.Text(label, style: const pw.TextStyle(fontSize: 10)),
-          pw.Text('${_fmt.format(monto)} Bs',
-              style: const pw.TextStyle(fontSize: 10)),
-        ],
-      ),
-    );
   }
 
   // ============================================================
@@ -1931,7 +2184,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ===== A) HORA + TASAS =====
           Row(
             children: [
               if (horaCierre.isNotEmpty) ...[
@@ -1964,8 +2216,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
             ],
           ),
           const SizedBox(height: 8),
-
-          // ===== G) MINI TARJETAS =====
           Row(
             children: [
               _miniCard(
@@ -1999,8 +2249,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
             ],
           ),
           const SizedBox(height: 12),
-
-          // ===== D) DISTRIBUCIÓN DETALLADA POR CUENTA =====
           _tituloBloque('DISTRIBUCIÓN POR CUENTA'),
           const SizedBox(height: 4),
           ...dist.map((d) {
@@ -2080,7 +2328,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
           const Divider(height: 10),
           _filaSimple('Total distribuido', totalDist, Colors.blueGrey,
               bold: true, aUsd: aUsd(totalDist)),
-
           const SizedBox(height: 10),
           _tituloBloque('GASTOS DE LA VENTA DEL DÍA'),
           const SizedBox(height: 4),
@@ -2131,8 +2378,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
           const Divider(height: 10),
           _filaSimple('Total gastos venta', totalGV, Colors.red,
               bold: true, aUsd: aUsd(totalGV)),
-
-          // ===== GASTOS ACUMULADOS CON COLORES =====
           if (gastosA.isNotEmpty) ...[
             const SizedBox(height: 10),
             _tituloBloque('GASTOS DEL ACUMULADO (referencia)'),
@@ -2174,8 +2419,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
             _filaSimple('Total acumulado', totalGA, Colors.grey,
                 aUsd: aUsd(totalGA)),
           ],
-
-          // ===== F) AVISO DESTACADO FALTANTE =====
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(12),
@@ -2240,8 +2483,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
               ],
             ),
           ),
-
-          // ===== PENDIENTES =====
           if (pendientes.isNotEmpty) ...[
             const SizedBox(height: 12),
             _tituloBloque('PENDIENTES POR PAGAR'),
@@ -2285,7 +2526,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
                   bold: true, aUsd: aUsd(totalPend)),
             ],
           ],
-
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
@@ -2349,7 +2589,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
       build: (ctx) => pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          // HEADER
           pw.Container(
             width: double.infinity,
             padding: const pw.EdgeInsets.all(12),
@@ -2375,8 +2614,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
             ),
           ),
           pw.SizedBox(height: 14),
-
-          // VENTA TOTAL
           pw.Container(
             width: double.infinity,
             padding: const pw.EdgeInsets.all(8),
@@ -2402,8 +2639,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
             ),
           ),
           pw.SizedBox(height: 14),
-
-          // DISTRIBUCIÓN
           pw.Text("DISTRIBUCIÓN POR CUENTA",
               style: pw.TextStyle(
                   fontSize: 10,
@@ -2441,7 +2676,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
                       color: PdfColor.fromHex('#0F52BA'))),
             ],
           ),
-
           pw.SizedBox(height: 14),
           pw.Text("GASTOS DE LA VENTA DEL DÍA",
               style: pw.TextStyle(
@@ -2484,7 +2718,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
                       color: colorRojo)),
             ],
           ),
-
           if (gastosA.isNotEmpty) ...[
             pw.SizedBox(height: 14),
             pw.Text("GASTOS DEL ACUMULADO (referencia)",
@@ -2522,8 +2755,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
               ],
             ),
           ],
-
-          // CUADRE
           pw.SizedBox(height: 16),
           pw.Container(
             width: double.infinity,
@@ -2556,8 +2787,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
               ],
             ),
           ),
-
-          // PENDIENTES
           if (pendientes.isNotEmpty) ...[
             pw.SizedBox(height: 14),
             pw.Text("PENDIENTES POR PAGAR",
@@ -3184,7 +3413,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
     return concepto;
   }
 
-  /// Extrae nombre + cuenta origen de un concepto de nómina
   Map<String, String> _parsearNomina(String concepto, String origen) {
     final limpio = _limpiarConcepto(concepto);
     final idx = limpio.indexOf('Nómina:');
@@ -3192,7 +3420,6 @@ class _ModalConsultasState extends State<ModalConsultas> {
       return {'titulo': limpio, 'cuenta': origen.isNotEmpty ? origen : '—'};
     }
     var resto = limpio.substring(idx + 7).trim();
-    // resto = "NOMBRE (V-XXX) | CUENTA: MONTO"
     String nombre = resto;
     String cuenta = origen.isNotEmpty ? origen : '—';
     final partes = resto.split('|');
