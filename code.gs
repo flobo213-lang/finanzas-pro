@@ -950,7 +950,6 @@ function guardarDiferenciaCambiaria(idCierre, fechaCierre, montoBs) {
 // ============================================================================
 // 6. CIERRE DE JORNADA
 // ============================================================================
-
 function registrarCierreJornada(payload) {
   var ss = obtenerSpreadsheet();
   var sheetHistorial = ss.getSheetByName("HISTORIAL");
@@ -978,12 +977,10 @@ function registrarCierreJornada(payload) {
     var fechaHC = _normalizarFecha(rowHC[1], "America/Caracas");
     var origenHC = (rowHC[14] || "ACUMULADO").toString().toUpperCase();
     
-    // Si es de HOY y salió de la Venta del Día
     if (fechaHC === fechaOp && origenHC === "VENTA_DIA") {
       var tipoHC = (rowHC[2] || "").toString().toUpperCase();
-      // Sumamos egresos y préstamos, pero no los traspasos internos
       if (tipoHC.indexOf("EGRESO") !== -1 || tipoHC.indexOf("PRESTAMO") !== -1 || tipoHC.indexOf("GASTO") !== -1) {
-        var montoHC = limpiarNumero(rowHC[5]); // Columna F (MONTO)
+        var montoHC = limpiarNumero(rowHC[5]);
         totalVentaDiaUsado += montoHC;
       }
     }
@@ -1130,7 +1127,7 @@ function registrarCierreJornada(payload) {
         tasaBCV, tasaUSDT,
         comision > 0 ? "COMISIONES" : "VENTAS",
         "S", "ACUMULADO", idCierre,
-        tasaBCV, "BCV", montoBsPos // <-- CORREGIDO
+        tasaBCV, "BCV", montoBsPos
       ]);
     }
 
@@ -1143,7 +1140,7 @@ function registrarCierreJornada(payload) {
         "CIERRE PAGO MÓVIL - " + it.cuenta + " | Monto: " + it.pagoMovil.toFixed(2) + marcaIdemp,
         tasaBCV, tasaUSDT, "VENTAS",
         "S", "ACUMULADO", idCierre,
-        tasaBCV, "BCV", equivPm // <-- CORREGIDO
+        tasaBCV, "BCV", equivPm
       ]);
     }
 
@@ -1155,7 +1152,7 @@ function registrarCierreJornada(payload) {
         comision, it.moneda, comBs, 0,
         "Comisión cierre " + it.cuenta + " — " + fechaOp + marcaIdemp,
         tasaBCV, tasaUSDT, "GASTOS_BANCARIOS", "S", "ACUMULADO", idCierre,
-        tasaBCV, "BCV", comBs // <-- CORREGIDO
+        tasaBCV, "BCV", comBs
       ]);
       actualizarSaldoEnHojaSaldos(sheetSaldos, "Gastos Bancarios", comision, true);
     }
@@ -1175,9 +1172,37 @@ function registrarCierreJornada(payload) {
   var gastos = _r2(limpiarNumero(payload.gastos || 0));
   var prestamos = _r2(limpiarNumero(payload.prestamos || 0));
 
-  // Ahora el backend resta automáticamente lo que se usó de la Venta del Día
+  // === PROCESAR PRÉSTAMOS DESDE EL CIERRE ===
+  if (payload.gastosVenta && Array.isArray(payload.gastosVenta)) {
+    var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL");
+    if (sheetTrab) {
+      var dataT = sheetTrab.getDataRange().getValues();
+      
+      for (var g = 0; g < payload.gastosVenta.length; g++) {
+        var gasto = payload.gastosVenta[g];
+        
+        if (gasto.categoria === "PRESTAMO_TRABAJADOR" && gasto.cedula) {
+          var cedulaClean = gasto.cedula.toString().replace(/[^0-9]/g, "");
+          var montoBs = limpiarNumero(gasto.monto || 0);
+          var montoUSD = tasaBCV > 0 ? _r2(montoBs / tasaBCV) : 0;
+
+          for (var t = 1; t < dataT.length; t++) {
+            var cedFila = (dataT[t][2] || dataT[t][0] || "").toString().replace(/[^0-9]/g, "");
+            if (cedFila === cedulaClean) {
+              var deudaActual = limpiarNumero(dataT[t][9] || 0);
+              var nuevaDeuda = _r2(deudaActual + montoUSD);
+              sheetTrab.getRange(t + 1, 10).setValue(nuevaDeuda);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+  // === FIN PRÉSTAMOS ===
+
   var diferencia = _r2(ventaTotal - distribuido - comisiones - totalVentaDiaUsado);
-  var descuadreBs = _r2(diferencia); // El backend impone su cálculo
+  var descuadreBs = _r2(diferencia);
   var estadoCierre = diferencia < 0 ? "FALTANTE" : "CERRADO";
 
   if (sheetCierres) {
@@ -1215,7 +1240,8 @@ function registrarCierreJornada(payload) {
         idTxAuto, fechaCierre, "EGRESO", cuentaAjuste, "VARIAS",
         montoAuto, "BS", montoAuto, 0,
         conceptoAuto,
-        tasaBCV, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre
+        tasaBCV, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre,
+        tasaBCV, "BCV", montoAuto // <--- COLUMNAS 19 CORREGIDAS
       ]);
     } else {
       actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaAjuste, montoAuto, true);
@@ -1223,7 +1249,8 @@ function registrarCierreJornada(payload) {
         idTxAuto, fechaCierre, "INGRESO", "VARIAS", cuentaAjuste,
         montoAuto, "BS", montoAuto, 0,
         conceptoAuto,
-        tasaBCV, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre
+        tasaBCV, tasaUSDT, categoriaAuto, "N", "ACUMULADO", idCierre,
+        tasaBCV, "BCV", montoAuto // <--- COLUMNAS 19 CORREGIDAS
       ]);
     }
   }
