@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 02-11-26 9.43pm
+// Versión: 3.727 MODIFICADO DEEP 02-11-26 10.54am
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -1689,27 +1689,26 @@ function registrarOperacion(payload) {
         else comisionNativa = comisionBs;
       }
       if (montoNat > 0) {
-        // === NUEVO: solo validar y actualizar saldo si NO es informativo ===
         if (!noAfectaSaldo) {
           var saldoD = obtenerSaldoCuenta(sheetSaldos, ctaD);
           var requerido = montoNat + (k === 0 ? comisionNativa : 0);
           
           if (saldoD < requerido) {
-            // AUTO-ASIGNACIÓN: Tomar el faltante de la Venta del Día
             origenFondos = "VENTA_DIA"; 
-            actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, saldoD, false); // Deja la cuenta en 0
+            actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, saldoD, false);
           } else {
             actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, montoNat, false);
           }
         }
-        cuentasTxt.push(ctaD + ": " + montoNat.toFixed(2) + " " + monedaNat);
+        // AQUI EL CAMBIO: Solo guardamos el nombre de la cuenta para el ORIGEN
+        cuentasTxt.push(ctaD); 
       }
     }
     cuentaSalida = cuentasTxt.join(" | ");
 
     if (comisionNativa > 0 && cuentaComision !== "" && !noAfectaSaldo) {
       actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaComision, comisionNativa, false);
-      cuentaSalida += " | Comisión: " + comisionNativa.toFixed(2);
+      // ELIMINAMOS ESTA LÍNEA: cuentaSalida += " | Comisión: " + comisionNativa.toFixed(2);
     }
   } else {
     // === NUEVO: mismo flag aplica a ruta sin desglose ===
@@ -2210,7 +2209,7 @@ function registrarIngreso(payload) {
       var monedaNat = (it.moneda || "BS").toString().toUpperCase();
       if (montoNat > 0) {
         actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, montoNat, true);
-        cuentasTxt.push(ctaD + ": +" + montoNat.toFixed(2) + " " + monedaNat);
+        cuentasTxt.push(ctaD);
       }
     }
     cuentaDestino = cuentasTxt.join(" | ");
@@ -3529,4 +3528,71 @@ function obtenerEstadisticas(payload) {
       servicios: varPct(actual.servicios, anterior.servicios)
     }
   };
+}
+function limpiarOrigenesYDestinosHistoricos() {
+  var ss = obtenerSpreadsheet();
+  var sheet = ss.getSheetByName("HISTORIAL");
+  if (!sheet) return "No existe HISTORIAL";
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return "No hay datos";
+
+  // Leemos desde la fila 2, columnas A a E (ID, Fecha, Tipo, Origen, Destino)
+  var data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
+  var cambios = 0;
+
+  for (var i = 0; i < data.length; i++) {
+    var row = data[i];
+    var idTx = row[0] ? row[0].toString().trim() : "";
+    if (idTx.indexOf("TX-") !== 0) continue;
+
+    var origenRaw = row[3] ? row[3].toString().trim() : "";
+    var destinoRaw = row[4] ? row[4].toString().trim() : "";
+
+    // --- LIMPIAR ORIGEN ---
+    if (origenRaw.indexOf(":") !== -1) {
+      var partesOrigen = origenRaw.split("|");
+      var cuentasOrigen = [];
+      
+      for (var j = 0; j < partesOrigen.length; j++) {
+        var p = partesOrigen[j].trim();
+        // Ignoramos si la parte es una comisión
+        if (p.toLowerCase().indexOf("comisión") === 0 || p.toLowerCase().indexOf("comision") === 0) continue;
+        
+        // Tomamos solo lo que está antes de los dos puntos
+        var cuenta = p.split(":")[0].trim();
+        if (cuenta !== "" && cuentasOrigen.indexOf(cuenta) === -1) {
+          cuentasOrigen.push(cuenta);
+        }
+      }
+      
+      var origenLimpio = cuentasOrigen.join(" | ");
+      if (origenLimpio !== "" && origenLimpio !== origenRaw) {
+        sheet.getRange(i + 2, 4).setValue(origenLimpio); // Columna D (ORIGEN)
+        cambios++;
+      }
+    }
+
+    // --- LIMPIAR DESTINO ---
+    if (destinoRaw.indexOf(":") !== -1) {
+      var partesDestino = destinoRaw.split("|");
+      var cuentasDestino = [];
+      
+      for (var k = 0; k < partesDestino.length; k++) {
+        var p2 = partesDestino[k].trim();
+        var cuenta2 = p2.split(":")[0].trim();
+        if (cuenta2 !== "" && cuentasDestino.indexOf(cuenta2) === -1) {
+          cuentasDestino.push(cuenta2);
+        }
+      }
+      
+      var destinoLimpio = cuentasDestino.join(" | ");
+      if (destinoLimpio !== "" && destinoLimpio !== destinoRaw) {
+        sheet.getRange(i + 2, 5).setValue(destinoLimpio); // Columna E (DESTINO)
+        cambios++;
+      }
+    }
+  }
+
+  Logger.log("Se limpiaron " + cambios + " celdas de ORIGEN/DESTINO con éxito.");
 }
