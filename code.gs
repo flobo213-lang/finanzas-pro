@@ -3374,7 +3374,6 @@ function _resolverTasas(payload) {
   }
   return { tasaUSD: tasaUSD, tasaUSDT: tasaUSDT };
 }
-
 function _calcularEstadisticasRango(desde, hasta) {
   var ss = obtenerSpreadsheet();
   var sheetHist = ss.getSheetByName("HISTORIAL");
@@ -3383,7 +3382,7 @@ function _calcularEstadisticasRango(desde, hasta) {
   var resultado = {
     ventas: 0, comisiones: 0, ventasNetas: 0,
     proveedores: 0, personal: 0, nomina: 0, servicios: 0, otros: 0, comprasDivisa: 0,
-    totalEgresos: 0, gastosNoOperativos: 0, // <--- NUEVO
+    totalEgresos: 0, gastosNoOperativos: 0,
     perdidaCambiariaUSD: 0, perdidaCambiariaBs: 0,
     ganancia: 0, margen: 0, movimientos: 0
   };
@@ -3408,29 +3407,43 @@ function _calcularEstadisticasRango(desde, hasta) {
     var monto = limpiarNumero(row[5]);
     var montoNeto = limpiarNumero(row[7]);
     var comision = limpiarNumero(row[8]);
+    var concepto = row[9] ? row[9].toString().toUpperCase() : ""; // AGREGADO PARA VALIDAR
     var categoria = row[12] ? row[12].toString().toUpperCase() : "";
 
-    var esIngreso = tipo.indexOf("INGRESO") === 0 || tipo.indexOf("CIERRE_POS") === 0 || tipo.indexOf("CIERRE_PAGO_MOVIL") === 0;
+    var esIngreso = tipo.indexOf("INGRESO") === 0 || tipo.indexOf("CIERRE") === 0;
 
     if (esIngreso) {
-      resultado.ventas += (montoNeto > 0 ? montoNeto : monto);
+      if (tipo.indexOf("CIERRE") === 0) {
+        // Para cierres: el bruto es monto + comision
+        resultado.ventas += (monto + comision); 
+        resultado.comisiones += comision;
+      } else {
+        resultado.ventas += (montoNeto > 0 ? montoNeto : monto);
+      }
     } else {
       var neto = montoNeto > 0 ? montoNeto : monto;
-      if (tipo.indexOf("TRASPASO") === 0) continue;
+      
+      if (tipo.indexOf("TRASPASO") === 0) {
+        resultado.gastosNoOperativos += comision; // Comisión de traspaso va a gasto financiero
+        continue;
+      }
 
-      // 1. EXCLUIMOS PRÉSTAMOS (Son activos)
+      // 1. EXCLUIMOS PRÉSTAMOS
       if (tipo.indexOf("PRESTAMO") === 0 || categoria === "PRESTAMO_TRABAJADOR") continue;
       
-      // 2. COMPRA DE DIVISAS
+      // 2. EXCLUIMOS EL GASTO DE LA COMISIÓN DEL CIERRE PARA NO DOBLE CONTAR
+      if (categoria === "GASTOS_BANCARIOS" && concepto.indexOf("COMISIÓN CIERRE") !== -1) continue;
+      
+      // 3. COMPRA DE DIVISAS
       if (tipo.indexOf("COMPRA_DIVISA") === 0) {
         resultado.comprasDivisa += monto;
       } 
-      // 3. AQUI ESTA LA MAGIA: GASTOS NO OPERATIVOS
+      // 4. GASTOS NO OPERATIVOS
       else if (categoria === "GASTO_FINANCIERO" || categoria === "IMPUESTOS" || categoria === "AJUSTE_CAJA" || categoria === "RETIRO_DUENO" || categoria === "GASTOS_PERSONALES") {
         resultado.gastosNoOperativos += neto;
       } 
-      // 4. GASTOS OPERATIVOS REALES
-      else if (tipo.indexOf("NOMINA") !== -1 || tipo.indexOf("LIQUIDACION") !== -1) {
+      // 5. GASTOS OPERATIVOS REALES
+      else if (tipo.indexOf("NOMINA") !== -1 || tipo.indexOf("LIQUIDACION") !== -1 || tipo.indexOf("PAGO_NOMINA") !== -1) {
         resultado.nomina += neto;
         resultado.totalEgresos += neto;
       } else if (categoria === "PERSONAL") {
@@ -3447,7 +3460,6 @@ function _calcularEstadisticasRango(desde, hasta) {
         resultado.totalEgresos += neto;
       }
     }
-    resultado.comisiones += comision;
   }
 
   if (sheetDif) {
@@ -3467,132 +3479,8 @@ function _calcularEstadisticasRango(desde, hasta) {
   }
 
   resultado.ventasNetas = resultado.ventas - resultado.comisiones;
-  
-  // GANANCIA REAL: Solo se restan gastos operativos y pérdida cambiaria
   resultado.ganancia = resultado.ventasNetas - resultado.totalEgresos - resultado.perdidaCambiariaBs;
   resultado.margen = resultado.ventasNetas > 0 ? (resultado.ganancia / resultado.ventasNetas) * 100 : 0;
 
   return resultado;
-}
-function probarReporte() {
-  Logger.log(JSON.stringify(_calcularEstadisticasRango("2026-11-01", "2026-11-05")));
-}
-function obtenerEstadisticas(payload) {
-  var desde = "";
-  var hasta = "";
-  if (payload) {
-    desde = (payload.fechaDesde || "").toString().trim();
-    hasta = (payload.fechaHasta || "").toString().trim();
-  }
-  if (desde === "" || hasta === "") {
-    var hoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
-    desde = hoy;
-    hasta = hoy;
-  }
-
-  var actual = _calcularEstadisticasRango(desde, hasta);
-
-  // Calcular rango anterior de igual longitud
-  var d1 = new Date(desde + "T12:00:00");
-  var d2 = new Date(hasta + "T12:00:00");
-  var dias = Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1;
-  var prevHasta = new Date(d1.getTime() - 86400000);
-  var prevDesde = new Date(prevHasta.getTime() - (dias - 1) * 86400000);
-  var prevDesdeStr = Utilities.formatDate(prevDesde, "America/Caracas", "yyyy-MM-dd");
-  var prevHastaStr = Utilities.formatDate(prevHasta, "America/Caracas", "yyyy-MM-dd");
-
-  var anterior = _calcularEstadisticasRango(prevDesdeStr, prevHastaStr);
-
-  // Calcular variaciones %
-  function varPct(act, ant) {
-    if (ant <= 0) return act > 0 ? 100 : 0;
-    return ((act - ant) / ant) * 100;
-  }
-
-  return {
-    status: "SUCCESS",
-    fechaDesde: desde,
-    fechaHasta: hasta,
-    fechaDesdeAnterior: prevDesdeStr,
-    fechaHastaAnterior: prevHastaStr,
-    actual: actual,
-    anterior: anterior,
-    variaciones: {
-      ventas: varPct(actual.ventas, anterior.ventas),
-      egresos: varPct(actual.totalEgresos, anterior.totalEgresos),
-      ganancia: varPct(actual.ganancia, anterior.ganancia),
-      personal: varPct(actual.personal, anterior.personal),
-      nomina: varPct(actual.nomina, anterior.nomina),
-      proveedores: varPct(actual.proveedores, anterior.proveedores),
-      comisiones: varPct(actual.comisiones, anterior.comisiones),
-      servicios: varPct(actual.servicios, anterior.servicios)
-    }
-  };
-}
-function limpiarOrigenesYDestinosHistoricos() {
-  var ss = obtenerSpreadsheet();
-  var sheet = ss.getSheetByName("HISTORIAL");
-  if (!sheet) return "No existe HISTORIAL";
-
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return "No hay datos";
-
-  // Leemos desde la fila 2, columnas A a E (ID, Fecha, Tipo, Origen, Destino)
-  var data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
-  var cambios = 0;
-
-  for (var i = 0; i < data.length; i++) {
-    var row = data[i];
-    var idTx = row[0] ? row[0].toString().trim() : "";
-    if (idTx.indexOf("TX-") !== 0) continue;
-
-    var origenRaw = row[3] ? row[3].toString().trim() : "";
-    var destinoRaw = row[4] ? row[4].toString().trim() : "";
-
-    // --- LIMPIAR ORIGEN ---
-    if (origenRaw.indexOf(":") !== -1) {
-      var partesOrigen = origenRaw.split("|");
-      var cuentasOrigen = [];
-      
-      for (var j = 0; j < partesOrigen.length; j++) {
-        var p = partesOrigen[j].trim();
-        // Ignoramos si la parte es una comisión
-        if (p.toLowerCase().indexOf("comisión") === 0 || p.toLowerCase().indexOf("comision") === 0) continue;
-        
-        // Tomamos solo lo que está antes de los dos puntos
-        var cuenta = p.split(":")[0].trim();
-        if (cuenta !== "" && cuentasOrigen.indexOf(cuenta) === -1) {
-          cuentasOrigen.push(cuenta);
-        }
-      }
-      
-      var origenLimpio = cuentasOrigen.join(" | ");
-      if (origenLimpio !== "" && origenLimpio !== origenRaw) {
-        sheet.getRange(i + 2, 4).setValue(origenLimpio); // Columna D (ORIGEN)
-        cambios++;
-      }
-    }
-
-    // --- LIMPIAR DESTINO ---
-    if (destinoRaw.indexOf(":") !== -1) {
-      var partesDestino = destinoRaw.split("|");
-      var cuentasDestino = [];
-      
-      for (var k = 0; k < partesDestino.length; k++) {
-        var p2 = partesDestino[k].trim();
-        var cuenta2 = p2.split(":")[0].trim();
-        if (cuenta2 !== "" && cuentasDestino.indexOf(cuenta2) === -1) {
-          cuentasDestino.push(cuenta2);
-        }
-      }
-      
-      var destinoLimpio = cuentasDestino.join(" | ");
-      if (destinoLimpio !== "" && destinoLimpio !== destinoRaw) {
-        sheet.getRange(i + 2, 5).setValue(destinoLimpio); // Columna E (DESTINO)
-        cambios++;
-      }
-    }
-  }
-
-  Logger.log("Se limpiaron " + cambios + " celdas de ORIGEN/DESTINO con éxito.");
 }
