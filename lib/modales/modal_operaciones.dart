@@ -26,6 +26,20 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
   final NumberFormat _fmt =
       NumberFormat.currency(locale: 'es_VE', symbol: '', decimalDigits: 2);
 
+  final Map<String, String> categoriasGasto = {
+    'GASTOS_PERSONALES': 'Gastos Personales (Casa, Comidas)',
+    'PRESTAMO_TRABAJADOR': 'Préstamo a Trabajador',
+    'Pago a Proveedores': 'Pago a Proveedores',
+    'Mantenimiento y Repuestos': 'Mantenimiento',
+    'Servicios Básicos': 'Servicios Básicos',
+    'PERSONAL': 'Personal',
+    'Otros Egresos': 'Otros Egresos',
+    'ALQUILER': 'Alquiler',
+    'GASTO_FINANCIERO': 'Gastos Financieros',
+    'IMPUESTOS': 'Impuestos',
+    'AJUSTE_CAJA': 'Ajuste de Caja',
+  };
+
   String? _vistaActual;
 
   // INGRESO
@@ -39,7 +53,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
   DateTime _fechaIngreso = DateTime.now();
 
   // EGRESO
-  String _categoriaEgreso = "Gasto Operativo / General";
+  String _categoriaEgreso = "Pago a Proveedores";
   String _cuentaEgresoActual = "Caja Efectivo Bs";
   String _metodoPagoEgreso = "EFECTIVO";
   String _origenFondosEgreso = "ACUMULADO";
@@ -111,20 +125,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
     "USDT"
   ];
 
-  final List<String> _categoriasEgreso = [
-    "Gasto Operativo / General",
-    "Pago a Proveedores",
-    "Mantenimiento y Repuestos",
-    "Servicios Básicos",
-    "PERSONAL",
-    "Otros Egresos",
-    "PRESTAMO_TRABAJADOR",
-    "ALQUILER", // <--- NUEVA
-    "GASTO_FINANCIERO", // <--- NUEVA
-    "IMPUESTOS", // <--- NUEVA
-    "AJUSTE_CAJA", // <--- NUEVA
-    "GASTOS_PERSONALES", // <--- NUEVA
-  ];
+  late final List<String> _categoriasEgreso = categoriasGasto.keys.toList();
 
   final List<String> _categoriasIngreso = [
     "AJUSTE",
@@ -1666,7 +1667,8 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
                   items: _categoriasEgreso
                       .map((t) => DropdownMenuItem(
                           value: t,
-                          child: Text(t, style: const TextStyle(fontSize: 11))))
+                          child: Text(categoriasGasto[t] ?? t,
+                              style: const TextStyle(fontSize: 11))))
                       .toList(),
                   onChanged: (v) => setState(() {
                     _categoriaEgreso = v!;
