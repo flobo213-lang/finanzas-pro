@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 06-11-26 3.57pm
+// Versión: 3.727 MODIFICADO DEEP 07-11-26 10.32am
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -1201,7 +1201,7 @@ function registrarCierreJornada(payload) {
   }
   // === FIN PRÉSTAMOS ===
 
-  var diferencia = _r2(ventaTotal - distribuido - comisiones - totalVentaDiaUsado);
+var diferencia = _r2(limpiarNumero(payload.descuadre || 0));
   var descuadreBs = _r2(diferencia);
   var estadoCierre = diferencia < 0 ? "FALTANTE" : "CERRADO";
 
@@ -2348,7 +2348,7 @@ function obtenerPendientes(params) {
       idTxPago: row[10] ? row[10].toString() : "",
       nota: row[11] ? row[11].toString() : ""
     };
-    pendientes.push(item);
+    pendientes.push(item); 
 
     if (estado === "PENDIENTE" && item.tipo === "POR_PAGAR") {
       // Solo sumamos en Bs para el total (si es otra moneda, no la suma aquí)
@@ -3544,4 +3544,46 @@ function obtenerEstadisticas(payload) {
       servicios: varPct(actual.servicios, anterior.servicios)
     }
   };
+}
+function limpiarSobranteFalso() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetHist = ss.getSheetByName("HISTORIAL");
+  var sheetSaldos = ss.getSheetByName("SALDOS");
+
+  if (!sheetHist || !sheetSaldos) {
+    SpreadsheetApp.getUi().alert("No se encontraron las hojas.");
+    return;
+  }
+
+  var data = sheetHist.getDataRange().getValues();
+  var filaAEliminar = -1;
+  var montoFalso = 0;
+
+  // Buscamos la transacción exacta del error
+  for (var i = 0; i < data.length; i++) {
+    if (data[i][0] === "TX-143082294") {
+      filaAEliminar = i + 1;
+      montoFalso = data[i][5]; // El monto está en la columna F
+      break;
+    }
+  }
+
+  if (filaAEliminar !== -1) {
+    // 1. Borramos la fila de HISTORIAL
+    sheetHist.deleteRow(filaAEliminar);
+    
+    // 2. Restamos el dinero falso del saldo de Caja Efectivo Bs
+    var dataSaldos = sheetSaldos.getDataRange().getValues();
+    for (var j = 0; j < dataSaldos.length; j++) {
+      if (dataSaldos[j][0] === "Caja Efectivo Bs") {
+        var saldoActual = dataSaldos[j][1];
+        var nuevoSaldo = saldoActual - montoFalso;
+        sheetSaldos.getRange(j + 1, 2).setValue(nuevoSaldo);
+        break;
+      }
+    }
+    SpreadsheetApp.getUi().alert("✅ ¡Listo! Se borró el sobrante falso de " + montoFalso + " Bs y se corrigió el saldo de la Caja.");
+  } else {
+    SpreadsheetApp.getUi().alert("No se encontró el error. Quizás ya lo borraste.");
+  }
 }
