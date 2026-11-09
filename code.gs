@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 08-11-26 9.27pm
+// Versión: 3.727 MODIFICADO DEEP 08-11-26 10.27pm
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -153,6 +153,8 @@ function manejarPeticionApi(action, payload) {
     else if (action === "registrarTraspaso") res = registrarTraspaso(payload);
     else if (action === "registrarCargoFijo") res = registrarCargoFijoMensual(payload);
     else if (action === "anularOperacion") res = anularOperacion(payload);
+    else if (action === "registrarNuevoTrabajador") res = registrarNuevoTrabajador(payload);
+    else if (action === "darDeBajaTrabajador") res = darDeBajaTrabajador(payload);
     return responderJSON(res);
   } catch (err) {
     return responderJSON({ status: "ERROR", mensaje: "Excepción POST: " + err.toString() });
@@ -3223,17 +3225,26 @@ function procesarOperacionTrabajador(payload) {
   var sheetSaldos = ss.getSheetByName("SALDOS");
   if (!sheetHistorial || !sheetSaldos) return { status: "ERROR", mensaje: "Faltan pestañas" };
 
-  var fechaHoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
+  var fechaOp = payload.fechaOperacion || Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
   var cedulaBuscada = (payload.cedula || "").toString().trim();
 
   if (cedulaBuscada !== "") {
+    // Calcular Lunes y Domingo de la semana de la operación
+    var d = new Date(fechaOp + "T12:00:00");
+    var diaSemana = d.getDay() || 7; 
+    d.setDate(d.getDate() - diaSemana + 1); // Lunes
+    var lunesStr = Utilities.formatDate(d, "America/Caracas", "yyyy-MM-dd");
+    d.setDate(d.getDate() + 6); // Domingo
+    var domingoStr = Utilities.formatDate(d, "America/Caracas", "yyyy-MM-dd");
+
     var histData = sheetHistorial.getDataRange().getValues();
     for (var h = 1; h < histData.length; h++) {
       var rowH = histData[h];
       var tipoH = rowH[2] ? rowH[2].toString().toUpperCase() : "";
       if (tipoH === "PAGO_NOMINA" || tipoH === "LIQUIDACION_FINAL") {
-        if (_normalizarFecha(rowH[1], "America/Caracas") === fechaHoy && (rowH[9] || "").toString().indexOf(cedulaBuscada) !== -1) {
-          return { status: "ERROR", mensaje: "Este trabajador ya fue pagado hoy. Verifica el historial." };
+        var fRow = _normalizarFecha(rowH[1], "America/Caracas");
+        if (fRow >= lunesStr && fRow <= domingoStr && (rowH[9] || "").toString().indexOf(cedulaBuscada) !== -1) {
+          return { status: "ERROR", mensaje: "Este trabajador ya fue pagado en esta semana (" + lunesStr + " al " + domingoStr + ")." };
         }
       }
     }
@@ -3618,4 +3629,96 @@ function TEST_SimularCierre() {
   
   var resultado = registrarCierreJornada(payloadPrueba);
   Logger.log(resultado);
+}
+function PRUEBA_OPERACION_DESTINO() {
+  var payload = {
+    tipoOperacion: "EGRESO",
+    categoria: "Pago a Proveedores",
+    concepto: "Prueba de destino",
+    montoBsPagado: 10,
+    cuentaSalida: "Caja Efectivo Bs",
+    proveedor: "PROVEEDOR DE PRUEBA", // Simulamos que Flutter envía esto
+    tasaUSD: 890,
+    fechaOperacion: Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd")
+  };
+  
+  var res = registrarOperacion(payload);
+  Logger.log(res);
+}
+// ============================================================================
+// 9. GESTIÓN DE TRABAJADORES (ALTA Y BAJA)
+// ============================================================================
+
+function registrarNuevoTrabajador(payload) {
+  var ss = obtenerSpreadsheet();
+  var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL");
+  if (!sheetTrab) return { status: "ERROR", mensaje: "No existe NOMINA_PERSONAL" };
+
+  var cedula = (payload.cedula || "").toString().trim();
+  var nombre = (payload.nombre || "").toString().trim().toUpperCase();
+  var cargo = (payload.cargo || "").toString().trim();
+  var fechaIngreso = (payload.fechaIngreso || "").toString().trim();
+  var sueldoBase = limpiarNumero(payload.sueldoBase || 0);
+  var ayudaFamiliar = limpiarNumero(payload.ayudaFamiliar || 0);
+  var frecuencia = (payload.frecuencia || "Semanal").toString().trim();
+  var bonoAlimenticio = limpiarNumero(payload.bonoAlimenticio || 0);
+
+  if (cedula === "" || nombre === "") {
+    return { status: "ERROR", mensaje: "La cédula y el nombre son obligatorios." };
+  }
+
+  // Validar que no exista la cédula
+  var data = sheetTrab.getDataRange().getValues();
+  var cedulaClean = cedula.replace(/[^0-9]/g, "");
+  for (var i = 1; i < data.length; i++) {
+    var cedFila = (data[i][2] || data[i][0] || "").toString().replace(/[^0-9]/g, "");
+    if (cedFila === cedulaClean && cedulaClean !== "") {
+      return { status: "ERROR", mensaje: "Ya existe un trabajador con esta cédula." };
+    }
+  }
+
+  // Insertar nueva fila (respetando el orden de tus columnas)
+  sheetTrab.appendRow([
+    "",               // Columna A (vacía o ID interno)
+    nombre,           // B: Nombre
+    cedula,           // C: Cédula
+    cargo,            // D: Cargo
+    fechaIngreso,     // E: Fecha Ingreso
+    sueldoBase,       // F: Sueldo Base
+    ayudaFamiliar,    // G: Ayuda Familiar
+    frecuencia,       // H: Frecuencia
+    "ACTIVO",         // I: Estado
+    0,                // J: Deuda
+    bonoAlimenticio,  // K: Bono Alimenticio
+    "",               // L: Fecha Egreso
+    "[]"              // M: Adicionales (JSON vacío)
+  ]);
+
+  return { status: "SUCCESS", exito: true, mensaje: "Trabajador registrado exitosamente." };
+}
+
+function darDeBajaTrabajador(payload) {
+  var ss = obtenerSpreadsheet();
+  var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL");
+  if (!sheetTrab) return { status: "ERROR", mensaje: "No existe NOMINA_PERSONAL" };
+
+  var cedula = (payload.cedula || "").toString().replace(/[^0-9]/g, "");
+  var fechaEgreso = (payload.fechaEgreso || "").toString().trim();
+
+  if (cedula === "" || fechaEgreso === "") {
+    return { status: "ERROR", mensaje: "Faltan datos para procesar la baja." };
+  }
+
+  var data = sheetTrab.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    var cedFila = (data[i][2] || data[i][0] || "").toString().replace(/[^0-9]/g, "");
+    if (cedFila === cedula) {
+      // Columna I (índice 8) = Estado | Columna L (índice 11) = Fecha Egreso
+      sheetTrab.getRange(i + 1, 9).setValue("INACTIVO");
+      sheetTrab.getRange(i + 1, 12).setValue(fechaEgreso);
+      return { status: "SUCCESS", exito: true, mensaje: "Trabajador dado de baja correctamente." };
+    }
+  }
+
+  return { status: "ERROR", mensaje: "Trabajador no encontrado." };
 }
