@@ -31,6 +31,9 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
   final TextEditingController _nuevoNombreCtrl = TextEditingController();
   final TextEditingController _nuevoCargoCtrl = TextEditingController();
   final TextEditingController _nuevoSueldoCtrl = TextEditingController();
+  final TextEditingController _descuentoFaltasCtrl = TextEditingController(text: "0.00");
+  bool _aplicarDescuentoFaltas = false;
+  String _monedaDescuentoFaltas = "USD";
 
   String _cuentaFuenteTmp = "Caja Efectivo Bs";
   String _metodoFuenteTmp = "EFECTIVO";
@@ -179,7 +182,17 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
     if (usd > _deudaPendiente) usd = _deudaPendiente;
     return _r2(usd);
   }
-
+// AQUI PEGAS LA FUNCION NUEVA
+  double _descFaltasUsd() {
+    if (!_aplicarDescuentoFaltas) return 0.0;
+    final raw = _parseNum(_descuentoFaltasCtrl.text);
+    if (raw <= 0) return 0.0;
+    if (_monedaDescuentoFaltas == "Bs") {
+      final tasa = _tasaActual();
+      return tasa > 0 ? _r2(raw / tasa) : 0.0;
+    }
+    return _r2(raw);
+  }
   String _textoLegal() {
     if (_tipoOperacion == "Liquidación / Finiquito") {
       return "HE RECIBIDO A MI ENTERA SATISFACCION EL PAGO DE MI LIQUIDACIÓN";
