@@ -2461,7 +2461,107 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res['mensaje'] ?? "Error al dar de baja"), backgroundColor: Colors.red));
     }
+  } // <--- AQUÍ CIERRA _darDeBajaTrabajador
+
+  void _mostrarModalNuevoTrabajador() {
+    _cedulaCtrl.clear();
+    _nuevoNombreCtrl.clear();
+    _nuevoCargoCtrl.clear();
+    _nuevoSueldoCtrl.clear();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        title: const Text("Registrar Nuevo Trabajador", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _cedulaCtrl,
+                keyboardType: TextInputType.number,
+                decoration: _dec(hint: "Cédula"),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _nuevoNombreCtrl,
+                decoration: _dec(hint: "Nombre Completo"),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _nuevoCargoCtrl,
+                decoration: _dec(hint: "Cargo"),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _nuevoSueldoCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: _dec(hint: "Sueldo Base (Bs o USD)", suffix: "Bs"),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancelar"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F52BA)),
+            onPressed: () async {
+              final ced = _cedulaCtrl.text.trim();
+              final nom = _nuevoNombreCtrl.text.trim();
+              final car = _nuevoCargoCtrl.text.trim();
+              final sue = _parseNum(_nuevoSueldoCtrl.text);
+
+              if (ced.isEmpty || nom.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Cédula y Nombre son obligatorios")));
+                return;
+              }
+
+              Navigator.pop(ctx);
+              setState(() => _cargando = true);
+
+              final res = await ApiService.registrarAccionConRespuesta(
+                "registrarNuevoTrabajador",
+                {
+                  "cedula": ced,
+                  "nombre": nom,
+                  "cargo": car,
+                  "sueldoBase": sue,
+                  "fechaIngreso": DateTime.now().toString().substring(0, 10),
+                }
+              );
+
+              if (!mounted) return;
+              setState(() => _cargando = false);
+
+              if (res['status'] == "SUCCESS") {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trabajador registrado"), backgroundColor: Colors.green));
+                _buscarTrabajador(); 
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res['mensaje'] ?? "Error"), backgroundColor: Colors.red));
+              }
+            },
+            child: const Text("Guardar", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
   }
+} // <--- AQUÍ CIERRA LA CLASE _ModalTrabajadorState
+
+// ─────────────────────────────────────────────
+// Widget del adicional (Stateful, con controller propio)
+// ─────────────────────────────────────────────
+class _AdicionalRowWidget extends StatefulWidget {
+  // ... (el resto de tu clase _AdicionalRowWidget se queda igual)
+
+// ─────────────────────────────────────────────
+// Widget del adicional (Stateful, con controller propio)
+// ─────────────────────────────────────────────
+class _AdicionalRowWidget extends StatefulWidget {}
 }
 // ─────────────────────────────────────────────
 // Widget del adicional (Stateful, con controller propio)
