@@ -2431,7 +2431,6 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
       ),
     );
   }
-
   void _darDeBajaTrabajador() async {
     final fecha = await showDatePicker(
       context: context,
@@ -2461,7 +2460,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res['mensaje'] ?? "Error al dar de baja"), backgroundColor: Colors.red));
     }
-  } // <--- AQUÍ CIERRA _darDeBajaTrabajador
+  }
 
   void _mostrarModalNuevoTrabajador() {
     _cedulaCtrl.clear();
@@ -2550,20 +2549,8 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
       ),
     );
   }
-  }
-} // <--- AQUÍ CIERRA LA CLASE _ModalTrabajadorState
+} // <--- ESTA ES LA ÚNICA LLAVE QUE CIERRA LA CLASE _ModalTrabajadorState
 
-// ─────────────────────────────────────────────
-// Widget del adicional (Stateful, con controller propio)
-// ─────────────────────────────────────────────
-class _AdicionalRowWidget extends StatefulWidget {
-  // ... (el resto de tu clase _AdicionalRowWidget se queda igual)
-
-// ─────────────────────────────────────────────
-// Widget del adicional (Stateful, con controller propio)
-// ─────────────────────────────────────────────
-class _AdicionalRowWidget extends StatefulWidget {}
-}
 // ─────────────────────────────────────────────
 // Widget del adicional (Stateful, con controller propio)
 // ─────────────────────────────────────────────
@@ -2683,6 +2670,9 @@ class _AdicionalRowWidgetState extends State<_AdicionalRowWidget> {
           ),
         ],
       ),
+    );
+  }
+}
     );
   }
 }
