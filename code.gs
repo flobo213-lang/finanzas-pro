@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 07-11-26 10.32am
+// Versión: 3.727 MODIFICADO DEEP 08-11-26 7.47pm
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -1125,7 +1125,7 @@ function registrarCierreJornada(payload) {
         netoPunto, it.moneda, montoBsPos, comision,
         "CIERRE POS - " + it.cuenta + " | Bruto: " + it.punto.toFixed(2) + ", Com: " + comision.toFixed(2) + ", Neto: " + netoPunto.toFixed(2) + marcaIdemp,
         tasaBCV, tasaUSDT,
-        comision > 0 ? "COMISIONES" : "VENTAS",
+        "VENTAS",
         "S", "ACUMULADO", idCierre,
         tasaBCV, "BCV", montoBsPos
       ]);
@@ -1142,19 +1142,6 @@ function registrarCierreJornada(payload) {
         "S", "ACUMULADO", idCierre,
         tasaBCV, "BCV", equivPm
       ]);
-    }
-
-    if (comision > 0) {
-      var idTxCom = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
-      var comBs = (it.moneda === "BS") ? comision : _r2(comision * tasaItem);
-      filasHistorial.push([
-        idTxCom, fechaCierre, "GASTO", "Gastos Bancarios", "",
-        comision, it.moneda, comBs, 0,
-        "Comisión cierre " + it.cuenta + " — " + fechaOp + marcaIdemp,
-        tasaBCV, tasaUSDT, "GASTOS_BANCARIOS", "S", "ACUMULADO", idCierre,
-        tasaBCV, "BCV", comBs
-      ]);
-      actualizarSaldoEnHojaSaldos(sheetSaldos, "Gastos Bancarios", comision, true);
     }
 
     totalNeto = _r2(totalNeto + totalCuenta);
@@ -1201,7 +1188,8 @@ function registrarCierreJornada(payload) {
   }
   // === FIN PRÉSTAMOS ===
 
-var diferencia = _r2(limpiarNumero(payload.descuadre || 0));
+  var diferencia = _r2(limpiarNumero(payload.descuadreBs !== undefined ? payload.descuadreBs : (payload.descuadre || 0)));
+  if (Math.abs(diferencia) <= 50.00) { diferencia = 0; }
   var descuadreBs = _r2(diferencia);
   var estadoCierre = diferencia < 0 ? "FALTANTE" : "CERRADO";
 
@@ -1222,7 +1210,7 @@ var diferencia = _r2(limpiarNumero(payload.descuadre || 0));
   }
 
   // ===== FALTANTE / SOBRANTE AUTOMÁTICO =====
-  if (Math.abs(descuadreBs) > 0.01 || diferencia < 0) {
+  if (Math.abs(descuadreBs) > 50.00) {
     var esFaltante = descuadreBs < 0 || diferencia < 0;
     var categoriaAuto = esFaltante ? "FALTANTE" : "AJUSTE";
     var montoAuto = Math.abs(descuadreBs);
@@ -2348,7 +2336,7 @@ function obtenerPendientes(params) {
       idTxPago: row[10] ? row[10].toString() : "",
       nota: row[11] ? row[11].toString() : ""
     };
-    pendientes.push(item); 
+    pendientes.push(item);
 
     if (estado === "PENDIENTE" && item.tipo === "POR_PAGAR") {
       // Solo sumamos en Bs para el total (si es otra moneda, no la suma aquí)
