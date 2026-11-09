@@ -2673,6 +2673,3 @@ class _AdicionalRowWidgetState extends State<_AdicionalRowWidget> {
     );
   }
 }
-    );
-  }
-}
