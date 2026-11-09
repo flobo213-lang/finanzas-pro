@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 08-11-26 10.27pm
+// Versión: 3.727 MODIFICADO DEEP 08-11-26 10.37pm
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -3269,6 +3269,7 @@ function procesarOperacionTrabajador(payload) {
   var nombre = payload.nombre || "";
   var esLiquidacion = tipoOperacion.toUpperCase().indexOf("LIQUIDACI") !== -1 || tipoOperacion.toUpperCase().indexOf("FINIQUITO") !== -1;
   var descuentoDeudaUSD = limpiarNumero(payload.descuentoDeuda || 0);
+  var descuentoFaltasUSD = limpiarNumero(payload.descuentoFaltas || 0);
   var nuevaDeuda = limpiarNumero(payload.nuevoSaldoDeuda || 0);
   var fuentes = payload.fuentesPago;
 
@@ -3300,6 +3301,7 @@ function procesarOperacionTrabajador(payload) {
   var concepto = (esLiquidacion ? "LIQUIDACIÓN FINAL - " : "PAGO NÓMINA - ") + tipoOperacion + ": " + nombre + " (V-" + cedula + ") | " + descripcionFuentes.join(" | ");
   if (idempotenciaKey !== "") concepto += " | IDEMP:" + idempotenciaKey;
   if (descuentoDeudaUSD > 0.01) concepto += " | Desc. préstamo: $" + descuentoDeudaUSD.toFixed(2) + " USD";
+  if (descuentoFaltasUSD > 0.01) concepto += " | Desc. faltas: $" + descuentoFaltasUSD.toFixed(2) + " USD";
 
   var fechaProcStr = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
   var tasaFinalProc = (tasaUSD > 0) ? tasaUSD : obtenerTasa(fechaProcStr, "BCV");
@@ -3350,7 +3352,7 @@ function procesarOperacionTrabajador(payload) {
       detAyudaFamiliar: limpiarNumero(payload.detAyudaFamiliar || 0), detBonoAlimenticio: limpiarNumero(payload.detBonoAlimenticio || 0),
       detComision: limpiarNumero(payload.detComision || 0), totalSalarial: limpiarNumero(payload.totalSalarial || 0),
       totalNoSalarial: limpiarNumero(payload.totalNoSalarial || 0), montoBrutoUSD: limpiarNumero(payload.montoBruto || 0),
-      descuentoDeuda: descuentoDeudaUSD, deudaAnterior: limpiarNumero(payload.deudaAnterior || 0),
+      descuentoDeuda: descuentoDeudaUSD, descuentoFaltas: descuentoFaltasUSD, deudaAnterior: limpiarNumero(payload.deudaAnterior || 0),
       montoUSD: limpiarNumero(payload.montoTotal || 0), montoBs: montoBsNeto, tasa: tasaUSD, nuevoSaldoDeuda: nuevaDeuda,
       fecha: Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd HH:mm:ss"),
       antiguedad: payload.antiguedad || "", fechaEgreso: payload.fechaEgreso || "",
