@@ -420,8 +420,9 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
           _r2(_totalSalarial + _totalNoSalarial + _totalAdicionalesUSD);
 
       final descDeuda = _descDeudaUsd();
+      final descFaltas = _descFaltasUsd(); // <--- NUEVO
       _montoNetoDivisas =
-          _r2(_mathMax(0.0, _totalDivisasCalculado - descDeuda));
+          _r2(_mathMax(0.0, _totalDivisasCalculado - descDeuda - descFaltas)); // <--- MODIFICADO
 
       _montoCtrl.text = _r2(_montoNetoDivisas * tasaActual).toStringAsFixed(2);
 
@@ -998,6 +999,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
       "totalNoSalarial": _totalNoSalarial,
       "montoBrutoUSD": _totalDivisasCalculado,
       "descuentoDeuda": descDeuda,
+      "descuentoFaltas": _descFaltasUsd(), // <--- NUEVO
       "deudaAnterior": _deudaPendiente,
       "montoUSD": _montoNetoDivisas,
       "montoBs": montoBs,
@@ -1266,6 +1268,12 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                             Colors.red.shade900,
                             negrita: true),
                       ],
+                       if (datos['descuentoFaltas'] != null && (datos['descuentoFaltas'] as num) > 0) ...[
+                        const Divider(height: 12),
+                        _filaDesglose("Descuento Faltas", -(datos['descuentoFaltas'] as num).toDouble(), Colors.orange.shade700),
+                      ],
+                      _filaDesglose("TOTAL USD", datos['montoUSD'], Colors.blue,
+                          negrita: true, grande: true),
                       _filaDesglose("TOTAL USD", datos['montoUSD'], Colors.blue,
                           negrita: true, grande: true),
                       _filaDesglose("TOTAL Bs", datos['montoBs'], Colors.green,
