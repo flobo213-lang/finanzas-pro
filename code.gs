@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 08-11-26 7.47pm
+// Versión: 3.727 MODIFICADO DEEP 08-11-26 9.27pm
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -1159,34 +1159,55 @@ function registrarCierreJornada(payload) {
   var gastos = _r2(limpiarNumero(payload.gastos || 0));
   var prestamos = _r2(limpiarNumero(payload.prestamos || 0));
 
-  // === PROCESAR PRÉSTAMOS DESDE EL CIERRE ===
+  // === PROCESAR GASTOS Y PRÉSTAMOS DESDE EL CIERRE ===
   if (payload.gastosVenta && Array.isArray(payload.gastosVenta)) {
     var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL");
-    if (sheetTrab) {
-      var dataT = sheetTrab.getDataRange().getValues();
-      
-      for (var g = 0; g < payload.gastosVenta.length; g++) {
-        var gasto = payload.gastosVenta[g];
-        
-        if (gasto.categoria === "PRESTAMO_TRABAJADOR" && gasto.cedula) {
-          var cedulaClean = gasto.cedula.toString().replace(/[^0-9]/g, "");
-          var montoBs = limpiarNumero(gasto.monto || 0);
-          var montoUSD = tasaBCV > 0 ? _r2(montoBs / tasaBCV) : 0;
+    var dataT = sheetTrab ? sheetTrab.getDataRange().getValues() : [];
 
-          for (var t = 1; t < dataT.length; t++) {
-            var cedFila = (dataT[t][2] || dataT[t][0] || "").toString().replace(/[^0-9]/g, "");
-            if (cedFila === cedulaClean) {
-              var deudaActual = limpiarNumero(dataT[t][9] || 0);
-              var nuevaDeuda = _r2(deudaActual + montoUSD);
-              sheetTrab.getRange(t + 1, 10).setValue(nuevaDeuda);
-              break;
-            }
+    for (var g = 0; g < payload.gastosVenta.length; g++) {
+      var gasto = payload.gastosVenta[g];
+      var montoGasto = limpiarNumero(gasto.monto || 0);
+      if (montoGasto <= 0) continue;
+
+      var cuentaGasto = gasto.cuenta || "Caja Efectivo Bs";
+      var catGasto = gasto.categoria || "OPERATIVO";
+      var origenF = gasto.afectaCuadre ? "VENTA_DIA" : "ACUMULADO";
+      var idTxGasto = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
+      
+      var conGasto = gasto.concepto || "Gasto del cierre";
+      if (catGasto === "PRESTAMO_TRABAJADOR" && gasto.cedula) {
+         conGasto += " · (V-" + gasto.cedula + ")";
+      }
+
+      // 1. Guardar en HISTORIAL
+      sheetHistorial.appendRow([
+        idTxGasto, fechaCierre, "EGRESO", cuentaGasto, catGasto,
+        montoGasto, "BS", montoGasto, 0, conGasto,
+        tasaBCV, tasaUSDT, catGasto, "N", origenF, idCierre,
+        tasaBCV, "BCV", montoGasto
+      ]);
+
+      // 2. Restar el saldo de la cuenta
+      actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaGasto, montoGasto, false);
+
+      // 3. Si es préstamo, sumar deuda
+      if (catGasto === "PRESTAMO_TRABAJADOR" && gasto.cedula) {
+        var cedulaClean = gasto.cedula.toString().replace(/[^0-9]/g, "");
+        var montoUSD = tasaBCV > 0 ? _r2(montoGasto / tasaBCV) : 0;
+
+        for (var t = 1; t < dataT.length; t++) {
+          var cedFila = (dataT[t][2] || dataT[t][0] || "").toString().replace(/[^0-9]/g, "");
+          if (cedFila === cedulaClean) {
+            var deudaActual = limpiarNumero(dataT[t][9] || 0);
+            var nuevaDeuda = _r2(deudaActual + montoUSD);
+            sheetTrab.getRange(t + 1, 10).setValue(nuevaDeuda);
+            break;
           }
         }
       }
     }
   }
-  // === FIN PRÉSTAMOS ===
+  // === FIN GASTOS Y PRÉSTAMOS ===
 
   var diferencia = _r2(limpiarNumero(payload.descuadreBs !== undefined ? payload.descuadreBs : (payload.descuadre || 0)));
   if (Math.abs(diferencia) <= 50.00) { diferencia = 0; }
@@ -1728,8 +1749,12 @@ function registrarOperacion(payload) {
   var fuenteFinalOp = (tasaUSD > 0) ? "MANUAL" : fuenteBuscadaOp;
 var montoBsOp = (payload.moneda === "USD" || payload.moneda === "USDT") ? (montoTotal * tasaFinalOp) : montoTotal;
 
+  // Destino inteligente: usa el proveedor, la categoría o deja vacío. Nunca "VARIAS".
+  var destinoReal = payload.proveedor || payload.tercero || categoria;
+  if (destinoReal === "VARIAS") destinoReal = "";
+
   sheetHistorial.appendRow([
-    idTx, fechaTx, tipoOperacion, cuentaSalida, "VARIAS",
+    idTx, fechaTx, tipoOperacion, cuentaSalida, destinoReal,
     montoTotal, "BS", montoTotal, comisionBs,
     concepto,
     tasaUSD, tasaUSDT, categoria, parteDelCierre, origenFondos, "",
@@ -3574,4 +3599,23 @@ function limpiarSobranteFalso() {
   } else {
     SpreadsheetApp.getUi().alert("No se encontró el error. Quizás ya lo borraste.");
   }
+}
+function TEST_SimularCierre() {
+  var payloadPrueba = {
+    fechaOperacion: Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd"),
+    tasaUSD: 890.00,
+    tasaUSDT: 1000.00,
+    descuadreBs: 10.00, // Simulamos un descuadre de 10 Bs (menor a 50)
+    desglose: {
+      "Bancamiga": {
+        punto: 1000.00,
+        pagoMovil: 500.00,
+        comision1Activa: true,
+        comision2Activa: true
+      }
+    }
+  };
+  
+  var resultado = registrarCierreJornada(payloadPrueba);
+  Logger.log(resultado);
 }
