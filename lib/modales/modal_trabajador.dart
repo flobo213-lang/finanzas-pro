@@ -28,6 +28,9 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
   final TextEditingController _descuentoDeudaCtrl =
       TextEditingController(text: "0.00");
   final TextEditingController _montoFuenteTmpCtrl = TextEditingController();
+  final TextEditingController _nuevoNombreCtrl = TextEditingController();
+  final TextEditingController _nuevoCargoCtrl = TextEditingController();
+  final TextEditingController _nuevoSueldoCtrl = TextEditingController();
 
   String _cuentaFuenteTmp = "Caja Efectivo Bs";
   String _metodoFuenteTmp = "EFECTIVO";
@@ -1524,6 +1527,22 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                                         fontWeight: FontWeight.bold)),
                           ),
                         ),
+                        const SizedBox(width: 6),
+                        SizedBox(
+                          height: 36,
+                          width: 36,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green.shade700,
+                              padding: EdgeInsets.zero,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                            ),
+                            onPressed: _mostrarModalNuevoTrabajador,
+                            child: const Icon(Icons.person_add, size: 16, color: Colors.white),
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -1540,11 +1559,39 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text("Nombre: $_nombreTrabajador",
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 11,
-                                    color: Colors.black87)),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Text("Nombre: $_nombreTrabajador",
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 11,
+                                          color: Colors.black87),
+                                      overflow: TextOverflow.ellipsis),
+                                ),
+                                if (!_trabajadorInactivo)
+                                  InkWell(
+                                    onTap: _darDeBajaTrabajador,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.red.shade50,
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(color: Colors.red.shade300),
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.person_off, size: 10, color: Colors.red),
+                                          SizedBox(width: 3),
+                                          Text("Dar de Baja", style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.red)),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                             const SizedBox(height: 3),
                             Text(
                                 "Sueldo: \$ ${_fmt.format(_sueldoBase)} | Ayuda: \$ ${_fmt.format(_ayudaFamiliar)}${_bonoAlimenticio > 0 ? ' | Bono: \$ ${_fmt.format(_bonoAlimenticio)}' : ''}",
@@ -2155,6 +2202,95 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
                                       ),
                                     const Divider(height: 12),
                                   ],
+                                  // --- NUEVO: DESCUENTO POR FALTAS ---
+                                  Row(
+                                    children: [
+                                      SizedBox(
+                                        height: 20,
+                                        width: 20,
+                                        child: Checkbox(
+                                          value: _aplicarDescuentoFaltas,
+                                          onChanged: (v) {
+                                            setState(() {
+                                              _aplicarDescuentoFaltas = v ?? false;
+                                              _calcularValores();
+                                            });
+                                          },
+                                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      const Expanded(
+                                          child: Text("Descontar Faltas / Días",
+                                              style: TextStyle(
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.orange))),
+                                    ],
+                                  ),
+                                  if (_aplicarDescuentoFaltas)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4, bottom: 4),
+                                      child: Row(
+                                        children: [
+                                          Container(
+                                            height: 28,
+                                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                                            decoration: BoxDecoration(
+                                              border: Border.all(color: Colors.grey.shade300),
+                                              borderRadius: BorderRadius.circular(6),
+                                            ),
+                                            child: DropdownButton<String>(
+                                              value: _monedaDescuentoFaltas,
+                                              isDense: true,
+                                              underline: const SizedBox(),
+                                              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black87),
+                                              items: const [
+                                                DropdownMenuItem(value: "USD", child: Text("USD")),
+                                                DropdownMenuItem(value: "Bs", child: Text("Bs")),
+                                              ],
+                                              onChanged: (v) {
+                                                setState(() {
+                                                  _monedaDescuentoFaltas = v ?? "USD";
+                                                  _calcularValores();
+                                                });
+                                              },
+                                            ),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Expanded(
+                                            child: SizedBox(
+                                              height: 28,
+                                              child: TextField(
+                                                controller: _descuentoFaltasCtrl,
+                                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                                style: const TextStyle(fontSize: 10),
+                                                onChanged: (_) => _calcularValores(),
+                                                decoration: _dec(
+                                                    hint: _monedaDescuentoFaltas == "USD"
+                                                        ? "Monto Faltas (\$)"
+                                                        : "Monto Faltas (Bs)"),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  if (_aplicarDescuentoFaltas)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2, bottom: 2),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          const Text("Faltas en USD:",
+                                              style: TextStyle(fontSize: 9, color: Colors.black54)),
+                                          Text("\$${_descFaltasUsd().toStringAsFixed(2)}",
+                                              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.orange)),
+                                        ],
+                                      ),
+                                    ),
+                                  const Divider(height: 12),
+                                  // -----------------------------------
                                   Row(
                                     children: [
                                       Icon(Icons.add_circle_outline,
@@ -2274,8 +2410,38 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
       ),
     );
   }
-}
 
+  void _darDeBajaTrabajador() async {
+    final fecha = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      helpText: "Seleccione Fecha de Egreso",
+    );
+    if (fecha == null) return;
+
+    setState(() => _procesando = true);
+
+    final res = await ApiService.registrarAccionConRespuesta(
+      "darDeBajaTrabajador",
+      {
+        "cedula": _cedulaReal,
+        "fechaEgreso": DateFormat('yyyy-MM-dd').format(fecha),
+      }
+    );
+
+    if (!mounted) return;
+    setState(() => _procesando = false);
+
+    if (res['status'] == "SUCCESS") {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trabajador dado de baja correctamente"), backgroundColor: Colors.green));
+      _buscarTrabajador(); 
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res['mensaje'] ?? "Error al dar de baja"), backgroundColor: Colors.red));
+    }
+  }
+}
 // ─────────────────────────────────────────────
 // Widget del adicional (Stateful, con controller propio)
 // ─────────────────────────────────────────────
