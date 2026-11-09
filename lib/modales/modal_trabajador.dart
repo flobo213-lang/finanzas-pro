@@ -2550,6 +2550,7 @@ class _ModalTrabajadorState extends State<ModalTrabajador> {
       ),
     );
   }
+  }
 } // <--- AQUÍ CIERRA LA CLASE _ModalTrabajadorState
 
 // ─────────────────────────────────────────────
