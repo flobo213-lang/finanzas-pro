@@ -1695,10 +1695,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
                   }),
                 ),
               ),
-                  }),
-                ),
-              ),
-
+                 
               // --- BLOQUE DE VINCULACIÓN A PENDIENTES ---
               const SizedBox(height: 6),
               SwitchListTile(
