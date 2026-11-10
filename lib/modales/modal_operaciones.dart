@@ -83,6 +83,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
   String _origenFondosTraspaso = "ACUMULADO";
   String? _monedaCalcTraspaso;
   final TextEditingController _montoTraspasoCtrl = TextEditingController();
+  final TextEditingController _montoDestinoManualCtrl = TextEditingController();
   final TextEditingController _conceptoTraspasoCtrl =
       TextEditingController(text: "Traspaso entre cuentas");
   DateTime _fechaTraspaso = DateTime.now();
@@ -111,28 +112,28 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
     "USDT"
   ];
 
-  final List<String> _categoriasEgreso = [
-    "Gasto Operativo / General",
-    "Pago a Proveedores",
-    "Mantenimiento y Repuestos",
-    "Servicios Básicos",
-    "PERSONAL",
-    "Otros Egresos",
-    "PRESTAMO_TRABAJADOR",
-    "ALQUILER", // <--- NUEVA
-    "GASTO_FINANCIERO", // <--- NUEVA
-    "IMPUESTOS", // <--- NUEVA
-    "AJUSTE_CAJA", // <--- NUEVA
-    "GASTOS_PERSONALES", // <--- NUEVA
-  ];
+  final Map<String, String> _categoriasEgreso = {
+    "Gasto Operativo / General": "Gasto Operativo / General",
+    "Pago a Proveedores": "Pago a Proveedores",
+    "Mantenimiento y Repuestos": "Mantenimiento y Repuestos",
+    "Servicios Básicos": "Servicios Básicos",
+    "PERSONAL": "Personal / Nómina",
+    "Otros Egresos": "Otros Egresos",
+    "PRESTAMO_TRABAJADOR": "Préstamo a Trabajador",
+    "ALQUILER": "Alquiler",
+    "GASTO_FINANCIERO": "Gasto Financiero",
+    "IMPUESTOS": "Impuestos",
+    "AJUSTE_CAJA": "Ajuste de Caja",
+    "GASTOS_PERSONALES": "Gastos Personales (Casa, Comidas)",
+  };
 
-  final List<String> _categoriasIngreso = [
-    "AJUSTE",
-    "INTERESES",
-    "PRESTAMO_RECIBIDO",
-    "DEVOLUCION",
-    "OTRO_INGRESO",
-  ];
+  final Map<String, String> _categoriasIngreso = {
+    "AJUSTE": "Ajuste",
+    "INTERESES": "Intereses",
+    "PRESTAMO_RECIBIDO": "Préstamo Recibido",
+    "DEVOLUCION": "Devolución",
+    "OTRO_INGRESO": "Otro Ingreso",
+  };
 
   final List<Map<String, dynamic>> _metodosPagoEgreso = [
     {"valor": "EFECTIVO", "label": "Efectivo / Depósito", "pct": 0.0},
@@ -1234,7 +1235,9 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
     final monedaDestino = _monedaParaCuenta(_cuentaDestinoTraspaso);
 
     final montoEnOrigen = _convertir(montoEscrito, monedaCalc, monedaOrigen);
-    final montoEnDestino = _convertir(montoEscrito, monedaCalc, monedaDestino);
+    final montoEnDestino = _montoDestinoManualCtrl.text.trim().isNotEmpty
+        ? _parseInput(_montoDestinoManualCtrl.text)
+        : _convertir(montoEscrito, monedaCalc, monedaDestino);
     final montoBs = _aBs(montoEscrito, monedaCalc);
 
     final comision = _comisionTraspaso(montoEnOrigen);
@@ -1261,6 +1264,8 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       "tipoTraspaso": _tipoTraspaso,
       "origenFondos": _origenFondosTraspaso,
       "concepto": _conceptoTraspasoCtrl.text.trim(),
+      "comision": comision,
+      "totalDebitar": totalDebitar,
       "tasaUSD": widget.tasaUSD,
       "tasaUSDT": widget.tasaUSDT,
       "fechaOperacion": _fechaAString(_fechaTraspaso),
@@ -1663,10 +1668,11 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
                   isExpanded: true,
                   style: const TextStyle(fontSize: 11, color: Colors.black87),
                   decoration: _inputDec(),
-                  items: _categoriasEgreso
-                      .map((t) => DropdownMenuItem(
-                          value: t,
-                          child: Text(t, style: const TextStyle(fontSize: 11))))
+                  items: _categoriasEgreso.entries
+                      .map((e) => DropdownMenuItem(
+                          value: e.key,
+                          child: Text(e.value,
+                              style: const TextStyle(fontSize: 11))))
                       .toList(),
                   onChanged: (v) => setState(() {
                     _categoriaEgreso = v!;
@@ -2168,10 +2174,11 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
                   isExpanded: true,
                   style: const TextStyle(fontSize: 11, color: Colors.black87),
                   decoration: _inputDec(),
-                  items: _categoriasIngreso
-                      .map((t) => DropdownMenuItem(
-                          value: t,
-                          child: Text(t, style: const TextStyle(fontSize: 11))))
+                                    items: _categoriasIngreso.entries
+                      .map((e) => DropdownMenuItem(
+                          value: e.key,
+                          child: Text(e.value,
+                              style: const TextStyle(fontSize: 11))))
                       .toList(),
                   onChanged: (v) => setState(() => _categoriaIngreso = v!),
                 ),
@@ -2571,13 +2578,46 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
               ),
               if (montoEscrito > 0 && cruzaMoneda)
                 Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                      "≈ Al destino llegan ${_fmt.format(montoEnDestino)} $monedaDestino",
-                      style: const TextStyle(
-                          fontSize: 10,
-                          color: Color(0xFF0F52BA),
-                          fontWeight: FontWeight.bold)),
+                  padding: const EdgeInsets.only(top: 6, bottom: 6),
+                  child: Row(
+                    children: [
+                      const Text("Llega al destino: ",
+                          style: TextStyle(
+                              fontSize: 10, fontWeight: FontWeight.bold)),
+                      Expanded(
+                        child: SizedBox(
+                          height: 32,
+                          child: TextField(
+                            controller: _montoDestinoManualCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            style: const TextStyle(
+                                fontSize: 11, fontWeight: FontWeight.bold),
+                            decoration: InputDecoration(
+                              hintText: "Auto: ${_fmt.format(montoEnDestino)}",
+                              hintStyle: const TextStyle(
+                                  fontSize: 10, color: Colors.grey),
+                              suffixText: monedaDestino,
+                              suffixStyle: const TextStyle(
+                                  fontSize: 10, fontWeight: FontWeight.bold),
+                              border: const OutlineInputBorder(),
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 8),
+                            ),
+                            onChanged: (_) => setState(() {}),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.content_copy,
+                            size: 16, color: Colors.blue),
+                        tooltip: "Igualar al monto de origen (1 a 1)",
+                        onPressed: () => setState(() => _montoDestinoManualCtrl
+                            .text = _montoTraspasoCtrl.text),
+                      ),
+                    ],
+                  ),
                 ),
               const SizedBox(height: 6),
               SizedBox(
