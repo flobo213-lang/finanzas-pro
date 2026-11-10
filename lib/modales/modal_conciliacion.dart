@@ -424,6 +424,22 @@ class _ModalConciliacionState extends State<ModalConciliacion> {
     final fechaStr = DateFormat('yyyy-MM-dd').format(_fechaCierre);
     final descuadre = ventaBs - distribuido - gastosAfectan - movMarcados;
 
+        // 1. Empaquetar los gastos para enviarlos juntos
+    List<Map<String, dynamic>> gastosPayload = [];
+    for (var g in _gastosVenta) {
+      final monto = _parseInput(g.montoCtrl.text);
+      if (monto <= 0) continue;
+      gastosPayload.add({
+        "categoria": g.categoria,
+        "concepto": g.descCtrl.text.trim().isEmpty ? "Gasto del cierre" : g.descCtrl.text.trim(),
+        "cedula": g.cedulaCtrl.text.trim(),
+        "monto": monto,
+        "cuenta": g.cuenta,
+        "afectaCuadre": g.afectaCuadre,
+        "moneda": _monedaDe(g.cuenta) == "Bs" ? "BS" : _monedaDe(g.cuenta),
+      });
+    }
+
     final payload = {
       "montoVentaUSD": _parseInput(_ventaSistemaCtrl.text),
       "ventaEsperadaBs": ventaBs,
@@ -436,6 +452,7 @@ class _ModalConciliacionState extends State<ModalConciliacion> {
       "tasaUSD": widget.tasaUSD,
       "tasaUSDT": widget.tasaUSDT,
       "fechaOperacion": fechaStr,
+      "gastosVenta": gastosPayload, // <--- AQUI VIAJA TODO
     };
 
     final res = await ApiService.registrarAccionConRespuesta(
@@ -448,57 +465,11 @@ class _ModalConciliacionState extends State<ModalConciliacion> {
       return;
     }
 
-    int ok = 0, fail = 0;
-    for (var g in _gastosVenta) {
-      final monto = _parseInput(g.montoCtrl.text);
-      if (monto <= 0) continue;
-      final desc = g.descCtrl.text.trim().isEmpty
-          ? "Gasto del cierre"
-          : g.descCtrl.text.trim();
-      final gp = {
-        "tipoOperacion": "EGRESO",
-        "categoria": g.categoria,
-        "concepto": desc,
-        "cedula": g.cedulaCtrl.text.trim(), // <--- AGREGA ESTA LÍNEA
-        "montoBsPagado": monto,
-        "cuentaSalida": g.cuenta,
-        "moneda": "BS",
-        "tasaUSD": widget.tasaUSD,
-        "tasaUSDT": widget.tasaUSDT,
-        "cuentasDesglose": [
-          {
-            "cuenta": g.cuenta,
-            "monto": monto,
-            "moneda": _monedaDe(g.cuenta) == "Bs" ? "BS" : _monedaDe(g.cuenta),
-            "montoBs": monto,
-          }
-        ],
-        "comisionBs": 0,
-        "metodoPago": "EFECTIVO",
-        "origenFondos": g.afectaCuadre ? "VENTA_DIA" : "ACUMULADO",
-        "noAfectaSaldo": g.afectaCuadre, // ⬅️ FIX: informativo si afecta cuadre
-        "fechaOperacion": fechaStr,
-      };
-      final rg = await ApiService.registrarAccionConRespuesta(
-          "registrarOperacion", gp);
-      if (!mounted) return;
-      if (rg['status'] == "SUCCESS" || rg['exito'] == true) {
-        ok++;
-      } else {
-        fail++;
-      }
-    }
-
     if (!mounted) return;
     setState(() => _procesando = false);
 
     final idCierre = res['idCierre']?.toString() ?? 'S/N';
-    final msj = ok + fail > 0
-        ? " · Gastos: $ok ok${fail > 0 ? ", $fail fallaron" : ""}"
-        : "";
-
-    _snack("Cierre $idCierre$msj",
-        fail > 0 ? Colors.orange.shade800 : Colors.green.shade800);
+    _snack("Cierre $idCierre procesado correctamente", Colors.green.shade800);
     Navigator.pop(context, true);
   }
 

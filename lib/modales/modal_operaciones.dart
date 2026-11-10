@@ -40,6 +40,21 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
 
   // EGRESO
   String _categoriaEgreso = "Gasto Operativo / General";
+  final Map<String, String> _categoriasEgresoMap = {
+    'GASTOS_PERSONALES': 'Gastos Personales (Casa, Comidas)',
+    'PRESTAMO_TRABAJADOR': 'Préstamo a Trabajador',
+    'Pago a Proveedores': 'Pago a Proveedores',
+    'Mantenimiento y Repuestos': 'Mantenimiento',
+    'Servicios Básicos': 'Servicios Básicos',
+    'PERSONAL': 'Personal',
+    'Otros Egresos': 'Otros Egresos',
+    'ALQUILER': 'Alquiler',
+    'GASTO_FINANCIERO': 'Gastos Financieros',
+    'IMPUESTOS': 'Impuestos',
+    'AJUSTE_CAJA': 'Ajuste de Caja',
+    'Gasto Operativo / General': 'Gasto Operativo / General',
+  };
+
   String _cuentaEgresoActual = "Caja Efectivo Bs";
   String _metodoPagoEgreso = "EFECTIVO";
   String _origenFondosEgreso = "ACUMULADO";
@@ -2174,7 +2189,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
                   isExpanded: true,
                   style: const TextStyle(fontSize: 11, color: Colors.black87),
                   decoration: _inputDec(),
-                                    items: _categoriasIngreso.entries
+                  items: _categoriasIngreso.entries
                       .map((e) => DropdownMenuItem(
                           value: e.key,
                           child: Text(e.value,

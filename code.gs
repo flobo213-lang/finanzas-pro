@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 06-11-26 3.57pm
+// Versión: 3.727 MODIFICADO DEEP 08-11-26 11.47pm
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -153,6 +153,8 @@ function manejarPeticionApi(action, payload) {
     else if (action === "registrarTraspaso") res = registrarTraspaso(payload);
     else if (action === "registrarCargoFijo") res = registrarCargoFijoMensual(payload);
     else if (action === "anularOperacion") res = anularOperacion(payload);
+    else if (action === "registrarNuevoTrabajador") res = registrarNuevoTrabajador(payload);
+    else if (action === "darDeBajaTrabajador") res = darDeBajaTrabajador(payload);
     return responderJSON(res);
   } catch (err) {
     return responderJSON({ status: "ERROR", mensaje: "Excepción POST: " + err.toString() });
@@ -1125,7 +1127,7 @@ function registrarCierreJornada(payload) {
         netoPunto, it.moneda, montoBsPos, comision,
         "CIERRE POS - " + it.cuenta + " | Bruto: " + it.punto.toFixed(2) + ", Com: " + comision.toFixed(2) + ", Neto: " + netoPunto.toFixed(2) + marcaIdemp,
         tasaBCV, tasaUSDT,
-        comision > 0 ? "COMISIONES" : "VENTAS",
+        "VENTAS",
         "S", "ACUMULADO", idCierre,
         tasaBCV, "BCV", montoBsPos
       ]);
@@ -1144,19 +1146,6 @@ function registrarCierreJornada(payload) {
       ]);
     }
 
-    if (comision > 0) {
-      var idTxCom = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
-      var comBs = (it.moneda === "BS") ? comision : _r2(comision * tasaItem);
-      filasHistorial.push([
-        idTxCom, fechaCierre, "GASTO", "Gastos Bancarios", "",
-        comision, it.moneda, comBs, 0,
-        "Comisión cierre " + it.cuenta + " — " + fechaOp + marcaIdemp,
-        tasaBCV, tasaUSDT, "GASTOS_BANCARIOS", "S", "ACUMULADO", idCierre,
-        tasaBCV, "BCV", comBs
-      ]);
-      actualizarSaldoEnHojaSaldos(sheetSaldos, "Gastos Bancarios", comision, true);
-    }
-
     totalNeto = _r2(totalNeto + totalCuenta);
     totalComisiones = _r2(totalComisiones + comision);
   }
@@ -1172,36 +1161,58 @@ function registrarCierreJornada(payload) {
   var gastos = _r2(limpiarNumero(payload.gastos || 0));
   var prestamos = _r2(limpiarNumero(payload.prestamos || 0));
 
-  // === PROCESAR PRÉSTAMOS DESDE EL CIERRE ===
+  // === PROCESAR GASTOS Y PRÉSTAMOS DESDE EL CIERRE ===
   if (payload.gastosVenta && Array.isArray(payload.gastosVenta)) {
     var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL");
-    if (sheetTrab) {
-      var dataT = sheetTrab.getDataRange().getValues();
-      
-      for (var g = 0; g < payload.gastosVenta.length; g++) {
-        var gasto = payload.gastosVenta[g];
-        
-        if (gasto.categoria === "PRESTAMO_TRABAJADOR" && gasto.cedula) {
-          var cedulaClean = gasto.cedula.toString().replace(/[^0-9]/g, "");
-          var montoBs = limpiarNumero(gasto.monto || 0);
-          var montoUSD = tasaBCV > 0 ? _r2(montoBs / tasaBCV) : 0;
+    var dataT = sheetTrab ? sheetTrab.getDataRange().getValues() : [];
 
-          for (var t = 1; t < dataT.length; t++) {
-            var cedFila = (dataT[t][2] || dataT[t][0] || "").toString().replace(/[^0-9]/g, "");
-            if (cedFila === cedulaClean) {
-              var deudaActual = limpiarNumero(dataT[t][9] || 0);
-              var nuevaDeuda = _r2(deudaActual + montoUSD);
-              sheetTrab.getRange(t + 1, 10).setValue(nuevaDeuda);
-              break;
-            }
+    for (var g = 0; g < payload.gastosVenta.length; g++) {
+      var gasto = payload.gastosVenta[g];
+      var montoGasto = limpiarNumero(gasto.monto || 0);
+      if (montoGasto <= 0) continue;
+
+      var cuentaGasto = gasto.cuenta || "Caja Efectivo Bs";
+      var catGasto = gasto.categoria || "OPERATIVO";
+      var origenF = gasto.afectaCuadre ? "VENTA_DIA" : "ACUMULADO";
+      var idTxGasto = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
+      
+      var conGasto = gasto.concepto || "Gasto del cierre";
+      if (catGasto === "PRESTAMO_TRABAJADOR" && gasto.cedula) {
+         conGasto += " · (V-" + gasto.cedula + ")";
+      }
+
+      // 1. Guardar en HISTORIAL
+      sheetHistorial.appendRow([
+        idTxGasto, fechaCierre, "EGRESO", cuentaGasto, catGasto,
+        montoGasto, "BS", montoGasto, 0, conGasto,
+        tasaBCV, tasaUSDT, catGasto, "N", origenF, idCierre,
+        tasaBCV, "BCV", montoGasto
+      ]);
+
+      // 2. Restar el saldo de la cuenta
+      actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaGasto, montoGasto, false);
+
+      // 3. Si es préstamo, sumar deuda
+      if (catGasto === "PRESTAMO_TRABAJADOR" && gasto.cedula) {
+        var cedulaClean = gasto.cedula.toString().replace(/[^0-9]/g, "");
+        var montoUSD = tasaBCV > 0 ? _r2(montoGasto / tasaBCV) : 0;
+
+        for (var t = 1; t < dataT.length; t++) {
+          var cedFila = (dataT[t][2] || dataT[t][0] || "").toString().replace(/[^0-9]/g, "");
+          if (cedFila === cedulaClean) {
+            var deudaActual = limpiarNumero(dataT[t][9] || 0);
+            var nuevaDeuda = _r2(deudaActual + montoUSD);
+            sheetTrab.getRange(t + 1, 10).setValue(nuevaDeuda);
+            break;
           }
         }
       }
     }
   }
-  // === FIN PRÉSTAMOS ===
+  // === FIN GASTOS Y PRÉSTAMOS ===
 
-  var diferencia = _r2(ventaTotal - distribuido - comisiones - totalVentaDiaUsado);
+  var diferencia = _r2(limpiarNumero(payload.descuadreBs !== undefined ? payload.descuadreBs : (payload.descuadre || 0)));
+  if (Math.abs(diferencia) <= 50.00) { diferencia = 0; }
   var descuadreBs = _r2(diferencia);
   var estadoCierre = diferencia < 0 ? "FALTANTE" : "CERRADO";
 
@@ -1222,7 +1233,7 @@ function registrarCierreJornada(payload) {
   }
 
   // ===== FALTANTE / SOBRANTE AUTOMÁTICO =====
-  if (Math.abs(descuadreBs) > 0.01 || diferencia < 0) {
+  if (Math.abs(descuadreBs) > 50.00) {
     var esFaltante = descuadreBs < 0 || diferencia < 0;
     var categoriaAuto = esFaltante ? "FALTANTE" : "AJUSTE";
     var montoAuto = Math.abs(descuadreBs);
@@ -1740,8 +1751,12 @@ function registrarOperacion(payload) {
   var fuenteFinalOp = (tasaUSD > 0) ? "MANUAL" : fuenteBuscadaOp;
 var montoBsOp = (payload.moneda === "USD" || payload.moneda === "USDT") ? (montoTotal * tasaFinalOp) : montoTotal;
 
+  // Destino inteligente: usa el proveedor, la categoría o deja vacío. Nunca "VARIAS".
+  var destinoReal = payload.proveedor || payload.tercero || categoria;
+  if (destinoReal === "VARIAS") destinoReal = "";
+
   sheetHistorial.appendRow([
-    idTx, fechaTx, tipoOperacion, cuentaSalida, "VARIAS",
+    idTx, fechaTx, tipoOperacion, cuentaSalida, destinoReal,
     montoTotal, "BS", montoTotal, comisionBs,
     concepto,
     tasaUSD, tasaUSDT, categoria, parteDelCierre, origenFondos, "",
@@ -3210,17 +3225,26 @@ function procesarOperacionTrabajador(payload) {
   var sheetSaldos = ss.getSheetByName("SALDOS");
   if (!sheetHistorial || !sheetSaldos) return { status: "ERROR", mensaje: "Faltan pestañas" };
 
-  var fechaHoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
+  var fechaOp = payload.fechaOperacion || Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
   var cedulaBuscada = (payload.cedula || "").toString().trim();
 
   if (cedulaBuscada !== "") {
+    // Calcular Lunes y Domingo de la semana de la operación
+    var d = new Date(fechaOp + "T12:00:00");
+    var diaSemana = d.getDay() || 7; 
+    d.setDate(d.getDate() - diaSemana + 1); // Lunes
+    var lunesStr = Utilities.formatDate(d, "America/Caracas", "yyyy-MM-dd");
+    d.setDate(d.getDate() + 6); // Domingo
+    var domingoStr = Utilities.formatDate(d, "America/Caracas", "yyyy-MM-dd");
+
     var histData = sheetHistorial.getDataRange().getValues();
     for (var h = 1; h < histData.length; h++) {
       var rowH = histData[h];
       var tipoH = rowH[2] ? rowH[2].toString().toUpperCase() : "";
       if (tipoH === "PAGO_NOMINA" || tipoH === "LIQUIDACION_FINAL") {
-        if (_normalizarFecha(rowH[1], "America/Caracas") === fechaHoy && (rowH[9] || "").toString().indexOf(cedulaBuscada) !== -1) {
-          return { status: "ERROR", mensaje: "Este trabajador ya fue pagado hoy. Verifica el historial." };
+        var fRow = _normalizarFecha(rowH[1], "America/Caracas");
+        if (fRow >= lunesStr && fRow <= domingoStr && (rowH[9] || "").toString().indexOf(cedulaBuscada) !== -1) {
+          return { status: "ERROR", mensaje: "Este trabajador ya fue pagado en esta semana (" + lunesStr + " al " + domingoStr + ")." };
         }
       }
     }
@@ -3245,6 +3269,7 @@ function procesarOperacionTrabajador(payload) {
   var nombre = payload.nombre || "";
   var esLiquidacion = tipoOperacion.toUpperCase().indexOf("LIQUIDACI") !== -1 || tipoOperacion.toUpperCase().indexOf("FINIQUITO") !== -1;
   var descuentoDeudaUSD = limpiarNumero(payload.descuentoDeuda || 0);
+  var descuentoFaltasUSD = limpiarNumero(payload.descuentoFaltas || 0);
   var nuevaDeuda = limpiarNumero(payload.nuevoSaldoDeuda || 0);
   var fuentes = payload.fuentesPago;
 
@@ -3276,6 +3301,7 @@ function procesarOperacionTrabajador(payload) {
   var concepto = (esLiquidacion ? "LIQUIDACIÓN FINAL - " : "PAGO NÓMINA - ") + tipoOperacion + ": " + nombre + " (V-" + cedula + ") | " + descripcionFuentes.join(" | ");
   if (idempotenciaKey !== "") concepto += " | IDEMP:" + idempotenciaKey;
   if (descuentoDeudaUSD > 0.01) concepto += " | Desc. préstamo: $" + descuentoDeudaUSD.toFixed(2) + " USD";
+  if (descuentoFaltasUSD > 0.01) concepto += " | Desc. faltas: $" + descuentoFaltasUSD.toFixed(2) + " USD";
 
   var fechaProcStr = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
   var tasaFinalProc = (tasaUSD > 0) ? tasaUSD : obtenerTasa(fechaProcStr, "BCV");
@@ -3326,7 +3352,7 @@ function procesarOperacionTrabajador(payload) {
       detAyudaFamiliar: limpiarNumero(payload.detAyudaFamiliar || 0), detBonoAlimenticio: limpiarNumero(payload.detBonoAlimenticio || 0),
       detComision: limpiarNumero(payload.detComision || 0), totalSalarial: limpiarNumero(payload.totalSalarial || 0),
       totalNoSalarial: limpiarNumero(payload.totalNoSalarial || 0), montoBrutoUSD: limpiarNumero(payload.montoBruto || 0),
-      descuentoDeuda: descuentoDeudaUSD, deudaAnterior: limpiarNumero(payload.deudaAnterior || 0),
+      descuentoDeuda: descuentoDeudaUSD, descuentoFaltas: descuentoFaltasUSD, deudaAnterior: limpiarNumero(payload.deudaAnterior || 0),
       montoUSD: limpiarNumero(payload.montoTotal || 0), montoBs: montoBsNeto, tasa: tasaUSD, nuevoSaldoDeuda: nuevaDeuda,
       fecha: Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd HH:mm:ss"),
       antiguedad: payload.antiguedad || "", fechaEgreso: payload.fechaEgreso || "",
@@ -3544,4 +3570,157 @@ function obtenerEstadisticas(payload) {
       servicios: varPct(actual.servicios, anterior.servicios)
     }
   };
+}
+function limpiarSobranteFalso() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetHist = ss.getSheetByName("HISTORIAL");
+  var sheetSaldos = ss.getSheetByName("SALDOS");
+
+  if (!sheetHist || !sheetSaldos) {
+    SpreadsheetApp.getUi().alert("No se encontraron las hojas.");
+    return;
+  }
+
+  var data = sheetHist.getDataRange().getValues();
+  var filaAEliminar = -1;
+  var montoFalso = 0;
+
+  // Buscamos la transacción exacta del error
+  for (var i = 0; i < data.length; i++) {
+    if (data[i][0] === "TX-143082294") {
+      filaAEliminar = i + 1;
+      montoFalso = data[i][5]; // El monto está en la columna F
+      break;
+    }
+  }
+
+  if (filaAEliminar !== -1) {
+    // 1. Borramos la fila de HISTORIAL
+    sheetHist.deleteRow(filaAEliminar);
+    
+    // 2. Restamos el dinero falso del saldo de Caja Efectivo Bs
+    var dataSaldos = sheetSaldos.getDataRange().getValues();
+    for (var j = 0; j < dataSaldos.length; j++) {
+      if (dataSaldos[j][0] === "Caja Efectivo Bs") {
+        var saldoActual = dataSaldos[j][1];
+        var nuevoSaldo = saldoActual - montoFalso;
+        sheetSaldos.getRange(j + 1, 2).setValue(nuevoSaldo);
+        break;
+      }
+    }
+    SpreadsheetApp.getUi().alert("✅ ¡Listo! Se borró el sobrante falso de " + montoFalso + " Bs y se corrigió el saldo de la Caja.");
+  } else {
+    SpreadsheetApp.getUi().alert("No se encontró el error. Quizás ya lo borraste.");
+  }
+}
+function TEST_SimularCierre() {
+  var payloadPrueba = {
+    fechaOperacion: Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd"),
+    tasaUSD: 890.00,
+    tasaUSDT: 1000.00,
+    descuadreBs: 10.00, // Simulamos un descuadre de 10 Bs (menor a 50)
+    desglose: {
+      "Bancamiga": {
+        punto: 1000.00,
+        pagoMovil: 500.00,
+        comision1Activa: true,
+        comision2Activa: true
+      }
+    }
+  };
+  
+  var resultado = registrarCierreJornada(payloadPrueba);
+  Logger.log(resultado);
+}
+function PRUEBA_OPERACION_DESTINO() {
+  var payload = {
+    tipoOperacion: "EGRESO",
+    categoria: "Pago a Proveedores",
+    concepto: "Prueba de destino",
+    montoBsPagado: 10,
+    cuentaSalida: "Caja Efectivo Bs",
+    proveedor: "PROVEEDOR DE PRUEBA", // Simulamos que Flutter envía esto
+    tasaUSD: 890,
+    fechaOperacion: Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd")
+  };
+  
+  var res = registrarOperacion(payload);
+  Logger.log(res);
+}
+// ============================================================================
+// 9. GESTIÓN DE TRABAJADORES (ALTA Y BAJA)
+// ============================================================================
+
+function registrarNuevoTrabajador(payload) {
+  var ss = obtenerSpreadsheet();
+  var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL");
+  if (!sheetTrab) return { status: "ERROR", mensaje: "No existe NOMINA_PERSONAL" };
+
+  var cedula = (payload.cedula || "").toString().trim();
+  var nombre = (payload.nombre || "").toString().trim().toUpperCase();
+  var cargo = (payload.cargo || "").toString().trim();
+  var fechaIngreso = (payload.fechaIngreso || "").toString().trim();
+  var sueldoBase = limpiarNumero(payload.sueldoBase || 0);
+  var ayudaFamiliar = limpiarNumero(payload.ayudaFamiliar || 0);
+  var frecuencia = (payload.frecuencia || "Semanal").toString().trim();
+  var bonoAlimenticio = limpiarNumero(payload.bonoAlimenticio || 0);
+
+  if (cedula === "" || nombre === "") {
+    return { status: "ERROR", mensaje: "La cédula y el nombre son obligatorios." };
+  }
+
+  // Validar que no exista la cédula
+  var data = sheetTrab.getDataRange().getValues();
+  var cedulaClean = cedula.replace(/[^0-9]/g, "");
+  for (var i = 1; i < data.length; i++) {
+    var cedFila = (data[i][2] || data[i][0] || "").toString().replace(/[^0-9]/g, "");
+    if (cedFila === cedulaClean && cedulaClean !== "") {
+      return { status: "ERROR", mensaje: "Ya existe un trabajador con esta cédula." };
+    }
+  }
+
+  // Insertar nueva fila (respetando el orden de tus columnas)
+  sheetTrab.appendRow([
+    "",               // Columna A (vacía o ID interno)
+    nombre,           // B: Nombre
+    cedula,           // C: Cédula
+    cargo,            // D: Cargo
+    fechaIngreso,     // E: Fecha Ingreso
+    sueldoBase,       // F: Sueldo Base
+    ayudaFamiliar,    // G: Ayuda Familiar
+    frecuencia,       // H: Frecuencia
+    "ACTIVO",         // I: Estado
+    0,                // J: Deuda
+    bonoAlimenticio,  // K: Bono Alimenticio
+    "",               // L: Fecha Egreso
+    "[]"              // M: Adicionales (JSON vacío)
+  ]);
+
+  return { status: "SUCCESS", exito: true, mensaje: "Trabajador registrado exitosamente." };
+}
+
+function darDeBajaTrabajador(payload) {
+  var ss = obtenerSpreadsheet();
+  var sheetTrab = ss.getSheetByName("NOMINA_PERSONAL");
+  if (!sheetTrab) return { status: "ERROR", mensaje: "No existe NOMINA_PERSONAL" };
+
+  var cedula = (payload.cedula || "").toString().replace(/[^0-9]/g, "");
+  var fechaEgreso = (payload.fechaEgreso || "").toString().trim();
+
+  if (cedula === "" || fechaEgreso === "") {
+    return { status: "ERROR", mensaje: "Faltan datos para procesar la baja." };
+  }
+
+  var data = sheetTrab.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    var cedFila = (data[i][2] || data[i][0] || "").toString().replace(/[^0-9]/g, "");
+    if (cedFila === cedula) {
+      // Columna I (índice 8) = Estado | Columna L (índice 11) = Fecha Egreso
+      sheetTrab.getRange(i + 1, 9).setValue("INACTIVO");
+      sheetTrab.getRange(i + 1, 12).setValue(fechaEgreso);
+      return { status: "SUCCESS", exito: true, mensaje: "Trabajador dado de baja correctamente." };
+    }
+  }
+
+  return { status: "ERROR", mensaje: "Trabajador no encontrado." };
 }
