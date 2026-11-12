@@ -188,11 +188,9 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
             0.0;
       }
 
-      for (var ctrlKey in _saldosControllers.keys) {
-        if (ctrlKey.toUpperCase() == key.toUpperCase() ||
-            ctrlKey.toUpperCase().contains(key.toUpperCase())) {
-          _saldosControllers[ctrlKey]!.text = _fmt.format(monto);
-        }
+      // Match exacto para evitar fantasmas
+      if (_saldosControllers.containsKey(key)) {
+        _saldosControllers[key]!.text = _fmt.format(monto);
       }
     });
   }
@@ -810,35 +808,69 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
                     const SizedBox(height: 8),
 
                     // TOTALES
-                    Row(
+                    Column(
                       children: [
-                        Expanded(
-                          child: _buildBloqueTotal(
-                            "TOTAL BS",
-                            _totalBs(),
-                            "Bs",
-                            const Color(0xFF0F52BA),
-                            Icons.payments,
-                          ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildBloqueTotal(
+                                "TOTAL BS",
+                                _totalBs(),
+                                "Bs",
+                                const Color(0xFF0F52BA),
+                                Icons.payments,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: _buildBloqueTotal(
+                                "TOTAL USD",
+                                _totalUsd(),
+                                "\$",
+                                Colors.green.shade700,
+                                Icons.attach_money,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: _buildBloqueTotal(
+                                "TOTAL USDT",
+                                _totalUsdt(),
+                                "₮",
+                                Colors.green.shade800,
+                                Icons.currency_bitcoin,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: _buildBloqueTotal(
-                            "TOTAL USD",
-                            _totalUsd(),
-                            "\$",
-                            Colors.green.shade700,
-                            Icons.attach_money,
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0F52BA),
+                            borderRadius: BorderRadius.circular(6),
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: _buildBloqueTotal(
-                            "TOTAL USDT",
-                            _totalUsdt(),
-                            "₮",
-                            Colors.green.shade800,
-                            Icons.currency_bitcoin,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                "GRAN TOTAL (En Bs)",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 10,
+                                ),
+                              ),
+                              Text(
+                                "${_fmt.format(_totalBs() + (_totalUsd() * _parseInput(_tasaUsdCtrl.text)) + (_totalUsdt() * _parseInput(_tasaUsdtCtrl.text)))} Bs",
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -1079,6 +1111,26 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
     required String moneda,
   }) {
     final ctrl = _saldosControllers[nombre]!;
+
+    // Calculamos la referencia en Bs si es divisa
+    double refBs = 0.0;
+    String textoRef = "";
+    if (moneda == "\$") {
+      double monto = _parseInput(ctrl.text);
+      double tasa = _parseInput(_tasaUsdCtrl.text);
+      if (monto > 0 && tasa > 0) {
+        refBs = monto * tasa;
+        textoRef = "≈ ${_fmt.format(refBs)} Bs";
+      }
+    } else if (moneda == "₮") {
+      double monto = _parseInput(ctrl.text);
+      double tasa = _parseInput(_tasaUsdtCtrl.text);
+      if (monto > 0 && tasa > 0) {
+        refBs = monto * tasa;
+        textoRef = "≈ ${_fmt.format(refBs)} Bs";
+      }
+    }
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 5),
       child: Row(
@@ -1094,13 +1146,27 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
           const SizedBox(width: 8),
           Expanded(
             flex: 3,
-            child: Text(
-              nombre,
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 10.5,
-                color: color,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  nombre,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 10.5,
+                    color: color,
+                  ),
+                ),
+                if (textoRef.isNotEmpty)
+                  Text(
+                    textoRef,
+                    style: TextStyle(
+                      fontSize: 8.5,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+              ],
             ),
           ),
           Expanded(
@@ -1113,6 +1179,7 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
                 textInputAction: TextInputAction.next,
+                onChanged: (_) => setState(() {}),
                 style: TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.bold,
