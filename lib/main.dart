@@ -782,65 +782,72 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     }
 
-    double granTotalBs =
-        totalBs + (totalUSD * _tasaUSD) + (totalUSDT * _tasaUSDT);
-    double granTotalUSD = _tasaUSD > 0 ? (granTotalBs / _tasaUSD) : 0;
-
-    return Container(
-      margin: const EdgeInsets.only(top: 12, bottom: 20),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.grey.shade300),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 4,
-                offset: const Offset(0, 2))
-          ]),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
+    return Padding(
+      padding: const EdgeInsets.only(top: 12, bottom: 20),
+      child: Row(
         children: [
-          // Gran Total en Bs (Rojo)
-          Text(
-            "${_fmt.format(granTotalBs)} Bs",
-            style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.red.shade800),
+          // BLOQUE 1: TOTAL EN BS
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+              decoration: BoxDecoration(
+                color: azulHeader.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: azulHeader.withValues(alpha: 0.3)),
+              ),
+              child: Column(
+                children: [
+                  Text("TOTAL EN BS",
+                      style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: azulHeader)),
+                  const SizedBox(height: 6),
+                  FittedBox(
+                    child: Text(
+                      "${_fmt.format(totalBs)} Bs",
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: azulHeader),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-          const SizedBox(height: 2),
-          // Ref en USD (Gris)
-          Text(
-            "≈ \$ ${_fmt.format(granTotalUSD)}",
-            style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey.shade600),
+          const SizedBox(width: 10),
+
+          // BLOQUE 2: TOTAL EN DIVISAS ($ y USDT)
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.green.shade300),
+              ),
+              child: Column(
+                children: [
+                  Text("TOTAL EN DIVISAS",
+                      style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green.shade800)),
+                  const SizedBox(height: 6),
+                  FittedBox(
+                    child: Text(
+                      "${_fmt.format(totalUSD)} \$  |  ${_fmt.format(totalUSDT)} ₮",
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green.shade800),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-          const Divider(height: 16),
-          // Desglose
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text("Bs: ${_fmt.format(totalBs)}",
-                  style: TextStyle(
-                      fontSize: 10,
-                      color: azulHeader,
-                      fontWeight: FontWeight.bold)),
-              Text("USD: ${_fmt.format(totalUSD)}",
-                  style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.green.shade700,
-                      fontWeight: FontWeight.bold)),
-              Text("USDT: ${_fmt.format(totalUSDT)}",
-                  style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.green.shade800,
-                      fontWeight: FontWeight.bold)),
-            ],
-          )
         ],
       ),
     );
