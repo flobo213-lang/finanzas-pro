@@ -163,18 +163,17 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
   void _llenarSaldosDesdeMapa(Map<String, dynamic>? mapa) {
     if (mapa == null) return;
 
+        // CANDADO: Solo leer el Mapa Limpio que envía el backend
     Map<String, dynamic> mapaSaldos = {};
-    if (mapa.containsKey('saldos') && mapa['saldos'] is Map) {
+    if (mapa.containsKey('saldosMap') && mapa['saldosMap'] is Map) {
+      mapaSaldos = Map<String, dynamic>.from(mapa['saldosMap']);
+    } else if (mapa.containsKey('saldos') && mapa['saldos'] is Map) {
       mapaSaldos = Map<String, dynamic>.from(mapa['saldos']);
-    } else {
-      mapaSaldos = mapa;
     }
 
-    if (mapaSaldos.isEmpty && mapa.containsKey('saldosMap')) {
-      final sm = mapa['saldosMap'];
-      if (sm is Map) {
-        mapaSaldos = Map<String, dynamic>.from(sm);
-      }
+    // Limpiar los campos en pantalla antes de poner los nuevos
+    for (var ctrl in _saldosControllers.values) {
+      ctrl.text = "0,00";
     }
 
     mapaSaldos.forEach((key, val) {
@@ -188,11 +187,9 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
             0.0;
       }
 
-      for (var ctrlKey in _saldosControllers.keys) {
-        if (ctrlKey.toUpperCase() == key.toUpperCase() ||
-            ctrlKey.toUpperCase().contains(key.toUpperCase())) {
-          _saldosControllers[ctrlKey]!.text = _fmt.format(monto);
-        }
+       // Match exacto para evitar fantasmas
+      if (_saldosControllers.containsKey(key)) {
+        _saldosControllers[key]!.text = _fmt.format(monto);
       }
     });
   }
