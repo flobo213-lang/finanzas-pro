@@ -389,10 +389,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     List<MapEntry<String, double>> saldosVerdes = [];
 
     Map<String, dynamic> mapaAProcesar = {};
-    if (_saldos.containsKey('saldos') && _saldos['saldos'] is Map) {
+    
+    // CANDADO ESTRICTO: Solo leer el Mapa Limpio que envía el backend
+    if (_saldos.containsKey('saldosMap') && _saldos['saldosMap'] is Map) {
+      mapaAProcesar = Map<String, dynamic>.from(_saldos['saldosMap']);
+    } else if (_saldos.containsKey('saldos') && _saldos['saldos'] is Map) {
       mapaAProcesar = Map<String, dynamic>.from(_saldos['saldos']);
-    } else {
-      mapaAProcesar = _saldos;
     }
 
     mapaAProcesar.forEach((key, value) {

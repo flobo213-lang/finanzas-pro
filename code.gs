@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 08-11-26 11.47pm
+// Versión: 3.727 MODIFICADO DEEP 11-11-26 11.27pm
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -224,7 +224,6 @@ function obtenerSaldosActuales() {
     }
   }
   var respuesta = { status: "SUCCESS", saldos: saldosArray, saldosMap: saldosMap };
-  for (var c in saldosMap) respuesta[c] = saldosMap[c];
   return respuesta;
 }
 
@@ -1171,10 +1170,15 @@ function registrarCierreJornada(payload) {
       var montoGasto = limpiarNumero(gasto.monto || 0);
       if (montoGasto <= 0) continue;
 
-      var cuentaGasto = gasto.cuenta || "Caja Efectivo Bs";
-      var catGasto = gasto.categoria || "OPERATIVO";
-      var origenF = gasto.afectaCuadre ? "VENTA_DIA" : "ACUMULADO";
-      var idTxGasto = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
+        var cuentaGasto = gasto.cuenta || "Caja Efectivo Bs";
+        var catGasto = gasto.categoria || "OPERATIVO";
+        var origenF = gasto.afectaCuadre ? "VENTA_DIA" : "ACUMULADO";
+        var idTxGasto = "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
+
+        // CANDADO DE SEGURIDAD: Si el nombre es un número o dice "Gastos", lo mandamos a Caja Efectivo Bs.
+        if (!isNaN(cuentaGasto) || cuentaGasto.toString().toUpperCase().includes("GASTO") || cuentaGasto.toString().trim() === "") {
+            cuentaGasto = "Caja Efectivo Bs";
+        }
       
       var conGasto = gasto.concepto || "Gasto del cierre";
       if (catGasto === "PRESTAMO_TRABAJADOR" && gasto.cedula) {
@@ -1211,10 +1215,16 @@ function registrarCierreJornada(payload) {
   }
   // === FIN GASTOS Y PRÉSTAMOS ===
 
-  var diferencia = _r2(limpiarNumero(payload.descuadreBs !== undefined ? payload.descuadreBs : (payload.descuadre || 0)));
-  if (Math.abs(diferencia) <= 50.00) { diferencia = 0; }
-  var descuadreBs = _r2(diferencia);
-  var estadoCierre = diferencia < 0 ? "FALTANTE" : "CERRADO";
+// CANDADO DIRECTOR TÉCNICO: Respetar la verdad absoluta de Flutter
+var descuadreFlutter = _r2(limpiarNumero(payload.descuadreBs !== undefined ? payload.descuadreBs : (payload.descuadre || 0)));
+
+// Tolerancia estricta: Si está entre 0.01 y 50.00 Bs, se asume Cuadre Perfecto (0)
+if (Math.abs(descuadreFlutter) <= 50.00) {
+  descuadreFlutter = 0.00; 
+}
+
+var descuadreBs = descuadreFlutter;
+var estadoCierre = descuadreBs < 0 ? "FALTANTE" : "CERRADO";
 
   if (sheetCierres) {
     var totalCobradoUSD = tasaBCV > 0 ? _r2(totalEquivalenteBs / tasaBCV) : 0;
@@ -1326,9 +1336,8 @@ function actualizarSaldoEnHojaSaldos(param1, param2, param3, param4) {
   if (targetRow !== -1) {
     sheetSaldos.getRange(targetRow, 2).setValue(nuevoSaldo);
   } else {
-    var nuevaFila = sheetSaldos.getLastRow() + 1;
-    sheetSaldos.getRange(nuevaFila, 1).setValue(cuentaId);
-    sheetSaldos.getRange(nuevaFila, 2).setValue(nuevoSaldo);
+    // CANDADO DE SEGURIDAD: Si la cuenta no existe, lanza error y NO la crea.
+    throw new Error("La cuenta '" + cuentaId + "' no existe en la hoja SALDOS. Operación abortada para no crear fantasmas.");
   }
 
   return nuevoSaldo;
@@ -3723,4 +3732,54 @@ function darDeBajaTrabajador(payload) {
   }
 
   return { status: "ERROR", mensaje: "Trabajador no encontrado." };
+}
+
+function corregirSaldosUSDTV11() {
+  const hoja = SpreadsheetApp.getActiveSheet(); 
+  if (!hoja.getName().toUpperCase().includes("HISTORIAL")) return;
+
+  const ultimaFila = hoja.getLastRow();
+  if (ultimaFila < 2) return;
+
+  // Leemos de A a L
+  const datos = hoja.getRange(2, 1, ultimaFila - 1, 12).getValues(); 
+  let cambiados = 0;
+
+  for (let i = 0; i < datos.length; i++) {
+    let tipo = datos[i][2] ? datos[i][2].toString().toUpperCase() : ""; // C
+    let origen = datos[i][3] ? datos[i][3].toString().toUpperCase() : ""; // D
+    let destino = datos[i][4] ? datos[i][4].toString().toUpperCase() : ""; // E
+    let monto = Number(datos[i][5]) || 0; // F
+    let moneda = datos[i][6] ? datos[i][6].toString().toUpperCase() : ""; // G
+    let tasaUsdt = Number(datos[i][11]) || 0; // L
+
+    // Si es un INGRESO o EGRESO, y toca la cuenta USDT, pero está guardado como BS
+    if ((tipo === "INGRESO" || tipo === "EGRESO") && 
+        (origen.includes("USDT") || destino.includes("USDT")) && 
+        moneda === "BS") {
+      
+      // Si hay una tasa válida, convertimos el monto a USDT real
+      if (tasaUsdt > 0) {
+        let montoEnUSDT = monto / tasaUsdt;
+        
+        // Redondeamos a 2 decimales
+        datos[i][5] = Math.round(montoEnUSDT * 100) / 100; // MONTO (F)
+        datos[i][6] = "USDT"; // MONEDA (G)
+        
+        cambiados++;
+      }
+    }
+  }
+
+  if (cambiados > 0) {
+    // Escribimos solo F, G (MONTO y MONEDA)
+    let resultadosFG = [];
+    for (let i = 0; i < datos.length; i++) {
+      resultadosFG.push([datos[i][5], datos[i][6]]); 
+    }
+    hoja.getRange(2, 6, resultadosFG.length, 2).setValues(resultadosFG);
+    SpreadsheetApp.getUi().alert(`✅ Éxito. Se corrigieron ${cambiados} operaciones de USDT que estaban guardadas como Bs.`);
+  } else {
+    SpreadsheetApp.getUi().alert("No se encontraron operaciones de USDT con montos en Bs.");
+  }
 }
