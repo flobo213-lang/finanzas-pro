@@ -118,13 +118,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _estadoDia = res;
         _bannerIgnorado = bannerIgn;
       });
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _bannerIgnorado = bannerIgn;
-        });
+      if (res['faltaCierre'] == true) {
+        _mostrarAlertaCierre();
       }
+    } catch (_) {
+      if (mounted) setState(() => _bannerIgnorado = bannerIgn);
     }
+  }
+
+  void _mostrarAlertaCierre() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Atención",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+        content: const Text(
+            "No se detectó cierre. ¿Deseas continuar operando con los saldos del último cierre disponible?",
+            style: TextStyle(fontSize: 12)),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              showDialog(
+                  context: context,
+                  builder: (context) => ModalConciliacion(
+                      tasaUSD: _tasaUSD, tasaUSDT: _tasaUSDT));
+            },
+            child: const Text("Ir a Conciliar",
+                style:
+                    TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0F52BA)),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Sí, continuar",
+                style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _ignorarBanner() async {

@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 11-11-26 11.27pm
+// Versión: 3.727 MODIFICADO DEEP 12-11-26 11.27am
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -2041,51 +2041,53 @@ function registrarCargoFijoMensual(payload) {
 // ============================================================================
 // VERIFICAR ESTADO DEL DÍA
 // ============================================================================
+
 function verificarEstadoDelDia() {
   var tz = "America/Caracas";
   var hoy = new Date();
   var diaSemana = Number(Utilities.formatDate(hoy, tz, "u"));
   var fechaHoy = Utilities.formatDate(hoy, tz, "yyyy-MM-dd");
-
-  if (diaSemana === 6 || diaSemana === 7) {
-    return { status: "SUCCESS", tasasCargadas: true, esFinDeSemana: true, fecha: fechaHoy };
-  }
-
   var ss = obtenerSpreadsheet();
-  var sheet = ss.getSheetByName("TASAS_HISTORICO");
-  if (!sheet) return { status: "SUCCESS", tasasCargadas: false, esFinDeSemana: false, fecha: fechaHoy };
-
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return { status: "SUCCESS", tasasCargadas: false, esFinDeSemana: false, fecha: fechaHoy };
-
-  var data = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-  var fechasCargadas = {};
-  for (var i = 0; i < data.length; i++) {
-    var f = convertirAFecha(data[i][0]);
-    if (f !== "") fechasCargadas[f] = true;
-  }
-
-  var tasasCargadas = false;
-  var fechaVigente = "";
-  for (var d = 0; d < 5; d++) {
-    var fechaCheck = new Date(hoy.getTime() - d * 24 * 60 * 60 * 1000);
-    var fechaStr = Utilities.formatDate(fechaCheck, tz, "yyyy-MM-dd");
-    var dow = Number(Utilities.formatDate(fechaCheck, tz, "u"));
-    if (dow === 6 || dow === 7) continue;
-    if (fechasCargadas[fechaStr]) {
-      tasasCargadas = true;
-      fechaVigente = fechaStr;
-      break;
+  
+  // Tasas
+  var tasasCargadas = false, fechaVigente = "";
+  var sheetTasas = ss.getSheetByName("TASAS_HISTORICO");
+  if (sheetTasas && sheetTasas.getLastRow() >= 2) {
+    var data = sheetTasas.getRange(2, 1, sheetTasas.getLastRow() - 1, 1).getValues();
+    var fechasCargadas = {};
+    for (var i = 0; i < data.length; i++) {
+      var f = convertirAFecha(data[i][0]);
+      if (f !== "") fechasCargadas[f] = true;
+    }
+    for (var d = 0; d < 5; d++) {
+      var fechaCheck = new Date(hoy.getTime() - d * 24 * 60 * 60 * 1000);
+      var fechaStr = Utilities.formatDate(fechaCheck, tz, "yyyy-MM-dd");
+      if ([6,7].indexOf(Number(Utilities.formatDate(fechaCheck, tz, "u"))) !== -1) continue;
+      if (fechasCargadas[fechaStr]) { tasasCargadas = true; fechaVigente = fechaStr; break; }
     }
   }
 
-  return {
-    status: "SUCCESS",
-    tasasCargadas: tasasCargadas,
-    esFinDeSemana: false,
-    fecha: fechaHoy,
-    fechaVigente: fechaVigente
-  };
+  // Último Cierre
+  var ultimoCierre = "";
+  var sheetCierres = ss.getSheetByName("HISTORIAL_CIERRES");
+  if (sheetCierres && sheetCierres.getLastRow() >= 2) {
+    var dataC = sheetCierres.getRange(2, 1, sheetCierres.getLastRow() - 1, 2).getValues();
+    for (var c = 0; c < dataC.length; c++) {
+      var fCierre = _normalizarFecha(dataC[c][1], tz);
+      if (fCierre > ultimoCierre) ultimoCierre = fCierre;
+    }
+  }
+
+  // Validar Fecha Esperada (saltando fines de semana)
+  var ayer = new Date(hoy);
+  if (diaSemana === 1) ayer.setDate(hoy.getDate() - 3);
+  else if (diaSemana === 7) ayer.setDate(hoy.getDate() - 2);
+  else ayer.setDate(hoy.getDate() - 1);
+  
+  var fechaEsperada = Utilities.formatDate(ayer, tz, "yyyy-MM-dd");
+  var faltaCierre = (ultimoCierre < fechaEsperada) && (diaSemana !== 6 && diaSemana !== 7); 
+
+  return { status: "SUCCESS", tasasCargadas: tasasCargadas, esFinDeSemana: (diaSemana === 6 || diaSemana === 7), fecha: fechaHoy, fechaVigente: fechaVigente, ultimoCierre: ultimoCierre, faltaCierre: faltaCierre };
 }
 
 // ============================================================================
