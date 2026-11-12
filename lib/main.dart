@@ -389,7 +389,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     List<MapEntry<String, double>> saldosVerdes = [];
 
     Map<String, dynamic> mapaAProcesar = {};
-    
+
     // CANDADO ESTRICTO: Solo leer el Mapa Limpio que envía el backend
     if (_saldos.containsKey('saldosMap') && _saldos['saldosMap'] is Map) {
       mapaAProcesar = Map<String, dynamic>.from(_saldos['saldosMap']);
@@ -682,6 +682,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ? 'USDT'
         : (nombre.toUpperCase().contains('USD') ? '\$' : 'BS');
     bool esCajaFisica = nombre.toUpperCase().contains('CAJA EFECTIVO');
+
+    // Calculamos la referencia en Bs
+    double refBs = 0.0;
+    if (nombre.toUpperCase().contains('USDT')) {
+      refBs = monto * _tasaUSDT;
+    } else if (nombre.toUpperCase().contains('USD')) {
+      refBs = monto * _tasaUSD;
+    }
+
     return Card(
       elevation: 1,
       margin: const EdgeInsets.only(bottom: 6),
@@ -692,14 +701,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Icon(Icons.account_balance_wallet, color: colorValor, size: 18),
         title: Text(nombre,
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-        trailing: Text(
-          esVerde
-              ? "${_fmt.format(monto)} $etiquetaMoneda" // USD y USDT
-              : (esCajaFisica
-                  ? "${_fmtBs.format((monto / 10).floor() * 10)} $etiquetaMoneda" // SOLO Caja Física
-                  : "${_fmt.format(monto)} $etiquetaMoneda"), // Los demás bancos (BBVA, Banesco, etc.)
-          style: TextStyle(
-              fontWeight: FontWeight.bold, fontSize: 13, color: colorValor),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              esVerde
+                  ? "${_fmt.format(monto)} $etiquetaMoneda"
+                  : (esCajaFisica
+                      ? "${_fmtBs.format((monto / 10).floor() * 10)} $etiquetaMoneda"
+                      : "${_fmt.format(monto)} $etiquetaMoneda"),
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, fontSize: 13, color: colorValor),
+            ),
+            // Referencia en Bs para divisas
+            if (esVerde && refBs > 0) ...[
+              const SizedBox(width: 6),
+              Text(
+                "≈ ${_fmt.format(refBs)} Bs",
+                style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey.shade600),
+              ),
+            ]
+          ],
         ),
       ),
     );
@@ -737,6 +762,90 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  // ============================================================
+  // NUEVO: CUADRO DE TOTALES (Estilo Imagen 2)
+  // ============================================================
+  Widget _buildResumenTotales(
+      List<MapEntry<String, double>> saldos, Color azulHeader) {
+    double totalBs = 0;
+    double totalUSD = 0;
+    double totalUSDT = 0;
+
+    for (var s in saldos) {
+      String key = s.key.toUpperCase();
+      if (key.contains('USDT')) {
+        totalUSDT += s.value;
+      } else if (key.contains('USD') || key.contains('DOLAR')) {
+        totalUSD += s.value;
+      } else {
+        totalBs += s.value;
+      }
+    }
+
+    double granTotalBs =
+        totalBs + (totalUSD * _tasaUSD) + (totalUSDT * _tasaUSDT);
+    double granTotalUSD = _tasaUSD > 0 ? (granTotalBs / _tasaUSD) : 0;
+
+    return Container(
+      margin: const EdgeInsets.only(top: 12, bottom: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey.shade300),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 4,
+                offset: const Offset(0, 2))
+          ]),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // Gran Total en Bs (Rojo)
+          Text(
+            "${_fmt.format(granTotalBs)} Bs",
+            style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.red.shade800),
+          ),
+          const SizedBox(height: 2),
+          // Ref en USD (Gris)
+          Text(
+            "≈ \$ ${_fmt.format(granTotalUSD)}",
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade600),
+          ),
+          const Divider(height: 16),
+          // Desglose
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text("Bs: ${_fmt.format(totalBs)}",
+                  style: TextStyle(
+                      fontSize: 10,
+                      color: azulHeader,
+                      fontWeight: FontWeight.bold)),
+              Text("USD: ${_fmt.format(totalUSD)}",
+                  style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.green.shade700,
+                      fontWeight: FontWeight.bold)),
+              Text("USDT: ${_fmt.format(totalUSDT)}",
+                  style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.green.shade800,
+                      fontWeight: FontWeight.bold)),
+            ],
+          )
+        ],
+      ),
+    );
+  }
+
   Widget _buildContenidoEscritorio(
       Color azulHeader, List<MapEntry<String, double>> saldosOrdenados) {
     return Padding(
@@ -764,6 +873,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Expanded(
                   child: _buildListaSaldos(saldosOrdenados, azulHeader),
                 ),
+                _buildResumenTotales(
+                    saldosOrdenados, azulHeader), // <-- Agregado aquí
               ],
             ),
           ),
@@ -790,6 +901,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   color: Colors.grey)),
           const SizedBox(height: 8),
           _buildListaSaldos(saldosOrdenados, azulHeader, shrinkWrap: true),
+          _buildResumenTotales(
+              saldosOrdenados, azulHeader), // <-- Agregado aquí
           const SizedBox(height: 30),
         ],
       ),
