@@ -683,12 +683,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
         : (nombre.toUpperCase().contains('USD') ? '\$' : 'BS');
     bool esCajaFisica = nombre.toUpperCase().contains('CAJA EFECTIVO');
 
-    // Calculamos la referencia en Bs
-    double refBs = 0.0;
-    if (nombre.toUpperCase().contains('USDT')) {
-      refBs = monto * _tasaUSDT;
-    } else if (nombre.toUpperCase().contains('USD')) {
-      refBs = monto * _tasaUSD;
+    // Calculamos la referencia (Bs -> $ o $ -> Bs)
+    String textoRef = "";
+    if (esVerde) {
+      double refBs = nombre.toUpperCase().contains('USDT')
+          ? monto * _tasaUSDT
+          : monto * _tasaUSD;
+      if (refBs > 0) textoRef = "≈ ${_fmt.format(refBs)} Bs";
+    } else {
+      if (_tasaUSD > 0) {
+        double refUsd = monto / _tasaUSD;
+        textoRef = "≈ \$ ${_fmt.format(refUsd)}";
+      }
     }
 
     return Card(
@@ -713,11 +719,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               style: TextStyle(
                   fontWeight: FontWeight.bold, fontSize: 13, color: colorValor),
             ),
-            // Referencia en Bs para divisas
-            if (esVerde && refBs > 0) ...[
+            // Referencia
+            if (textoRef.isNotEmpty) ...[
               const SizedBox(width: 6),
               Text(
-                "≈ ${_fmt.format(refBs)} Bs",
+                textoRef,
                 style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.bold,

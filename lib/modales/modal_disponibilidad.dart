@@ -1111,22 +1111,19 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
   }) {
     final ctrl = _saldosControllers[nombre]!;
 
-    // Calculamos la referencia en Bs si es divisa
-    double refBs = 0.0;
+    // Calculamos el monto actual y las referencias
+    double monto = _parseInput(ctrl.text);
+    double tasaUsd = _parseInput(_tasaUsdCtrl.text);
+    double tasaUsdt = _parseInput(_tasaUsdtCtrl.text);
+
     String textoRef = "";
-    if (moneda == "\$") {
-      double monto = _parseInput(ctrl.text);
-      double tasa = _parseInput(_tasaUsdCtrl.text);
-      if (monto > 0 && tasa > 0) {
-        refBs = monto * tasa;
-        textoRef = "≈ ${_fmt.format(refBs)} Bs";
-      }
-    } else if (moneda == "₮") {
-      double monto = _parseInput(ctrl.text);
-      double tasa = _parseInput(_tasaUsdtCtrl.text);
-      if (monto > 0 && tasa > 0) {
-        refBs = monto * tasa;
-        textoRef = "≈ ${_fmt.format(refBs)} Bs";
+    if (monto > 0) {
+      if (moneda == "\$" && tasaUsd > 0) {
+        textoRef = "≈ ${_fmt.format(monto * tasaUsd)} Bs";
+      } else if (moneda == "₮" && tasaUsdt > 0) {
+        textoRef = "≈ ${_fmt.format(monto * tasaUsdt)} Bs";
+      } else if (moneda == "Bs" && tasaUsd > 0) {
+        textoRef = "≈ \$ ${_fmt.format(monto / tasaUsd)}";
       }
     }
 
