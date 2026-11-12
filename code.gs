@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 11-11-26 10.27pm
+// Versión: 3.727 MODIFICADO DEEP 11-11-26 11.27pm
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -224,7 +224,6 @@ function obtenerSaldosActuales() {
     }
   }
   var respuesta = { status: "SUCCESS", saldos: saldosArray, saldosMap: saldosMap };
-  for (var c in saldosMap) respuesta[c] = saldosMap[c];
   return respuesta;
 }
 
@@ -1216,10 +1215,16 @@ function registrarCierreJornada(payload) {
   }
   // === FIN GASTOS Y PRÉSTAMOS ===
 
-  var diferencia = _r2(limpiarNumero(payload.descuadreBs !== undefined ? payload.descuadreBs : (payload.descuadre || 0)));
-  if (Math.abs(diferencia) <= 50.00) { diferencia = 0; }
-  var descuadreBs = _r2(diferencia);
-  var estadoCierre = diferencia < 0 ? "FALTANTE" : "CERRADO";
+// CANDADO DIRECTOR TÉCNICO: Respetar la verdad absoluta de Flutter
+var descuadreFlutter = _r2(limpiarNumero(payload.descuadreBs !== undefined ? payload.descuadreBs : (payload.descuadre || 0)));
+
+// Tolerancia estricta: Si está entre 0.01 y 50.00 Bs, se asume Cuadre Perfecto (0)
+if (Math.abs(descuadreFlutter) <= 50.00) {
+  descuadreFlutter = 0.00; 
+}
+
+var descuadreBs = descuadreFlutter;
+var estadoCierre = descuadreBs < 0 ? "FALTANTE" : "CERRADO";
 
   if (sheetCierres) {
     var totalCobradoUSD = tasaBCV > 0 ? _r2(totalEquivalenteBs / tasaBCV) : 0;
