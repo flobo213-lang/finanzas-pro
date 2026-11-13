@@ -37,6 +37,8 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
   final TextEditingController _conceptoIngresoCtrl = TextEditingController();
   final List<Map<String, dynamic>> _desgloseIngreso = [];
   DateTime _fechaIngreso = DateTime.now();
+  double _tasaBCVActiva = 0.0;
+  double _tasaUSDTActiva = 0.0;
 
   // EGRESO
   String _categoriaEgreso = "Gasto Operativo / General";
@@ -168,10 +170,14 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
   @override
   void initState() {
     super.initState();
+    // Inicializar tasas activas con las de hoy
+    _tasaBCVActiva = widget.tasaUSD;
+    _tasaUSDTActiva = widget.tasaUSDT;
+
     _tasaBCVCtrl =
-        TextEditingController(text: widget.tasaUSD.toStringAsFixed(2));
+        TextEditingController(text: _tasaBCVActiva.toStringAsFixed(2));
     _tasaUSDTCTRL =
-        TextEditingController(text: widget.tasaUSDT.toStringAsFixed(2));
+        TextEditingController(text: _tasaUSDTActiva.toStringAsFixed(2));
     _cargarSaldosInicial();
   }
 
@@ -184,6 +190,55 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       });
     }
     _cargarSaldosEnVivo();
+  }
+
+  Future<void> _actualizarTasasPorFecha(
+      DateTime fecha, Function(DateTime) setFecha) async {
+    setFecha(fecha);
+    final hoy = DateTime.now();
+    final esHoy = fecha.year == hoy.year &&
+        fecha.month == hoy.month &&
+        fecha.day == hoy.day;
+    final fechaStr = _fechaAString(fecha);
+
+    if (esHoy) {
+      if (!mounted) return;
+      setState(() {
+        _tasaBCVActiva = widget.tasaUSD;
+        _tasaUSDTActiva = widget.tasaUSDT;
+        _tasaBCVCtrl.text = _tasaBCVActiva.toStringAsFixed(2);
+        _tasaUSDTCTRL.text = _tasaUSDTActiva.toStringAsFixed(2);
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    _mostrarMensaje("Buscando tasas del $fechaStr...", Colors.blue.shade800);
+
+    try {
+      final res = await ApiService.obtenerTasasPorFecha(fechaStr);
+
+      if (!mounted) return;
+
+      if (res['status'] == 'SUCCESS') {
+        setState(() {
+          _tasaBCVActiva = (res['BCV'] as num?)?.toDouble() ?? _tasaBCVActiva;
+          _tasaUSDTActiva =
+              (res['USDT'] as num?)?.toDouble() ?? _tasaUSDTActiva;
+          _tasaBCVCtrl.text = _tasaBCVActiva.toStringAsFixed(2);
+          _tasaUSDTCTRL.text = _tasaUSDTActiva.toStringAsFixed(2);
+        });
+        _mostrarMensaje(
+            "Tasas históricas del $fechaStr aplicadas", Colors.green.shade800);
+      } else {
+        _mostrarMensaje("No hay tasas para esa fecha. Usando tasa actual.",
+            Colors.orange.shade800);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _mostrarMensaje(
+          "Error de red al buscar tasa histórica.", Colors.red.shade800);
+    }
   }
 
   Future<void> _cargarSaldosEnVivo() async {
@@ -306,14 +361,14 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
   }
 
   double _aBs(double monto, String moneda) {
-    if (moneda == "USD") return monto * widget.tasaUSD;
-    if (moneda == "USDT") return monto * widget.tasaUSDT;
+    if (moneda == "USD") return monto * _tasaBCVActiva;
+    if (moneda == "USDT") return monto * _tasaUSDTActiva;
     return monto;
   }
 
   double _deBs(double montoBs, String moneda) {
-    if (moneda == "USD") return montoBs / widget.tasaUSD;
-    if (moneda == "USDT") return montoBs / widget.tasaUSDT;
+    if (moneda == "USD") return montoBs / _tasaBCVActiva;
+    if (moneda == "USDT") return montoBs / _tasaUSDTActiva;
     return montoBs;
   }
 
@@ -576,7 +631,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
     final nom = _nombrePrestamoCtrl.text.trim();
     final monto = _parseInput(_montoPrestamoCtrl.text);
     final cuenta = _cuentaEgresoActual;
-    final tasa = widget.tasaUSD;
+    final tasa = _tasaBCVActiva;
 
     if (ced.isEmpty) {
       _mostrarMensaje("Falta la cédula", Colors.red.shade800);
@@ -693,7 +748,8 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       children: [
         _buildFechaSelector(
           fecha: _fechaEgreso,
-          onCambio: (d) => setState(() => _fechaEgreso = d),
+          onCambio: (d) =>
+              _actualizarTasasPorFecha(d, (nueva) => _fechaEgreso = nueva),
           color: Colors.red.shade700,
         ),
         const SizedBox(height: 6),
@@ -1039,8 +1095,8 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       "idPendiente": _idPendienteSeleccionado, // <--- VINCULACION PENDIENTE
       "cuentaSalida": desglose.isNotEmpty ? desglose[0]['cuenta'] : "VARIAS",
       "moneda": "BS",
-      "tasaUSD": widget.tasaUSD,
-      "tasaUSDT": widget.tasaUSDT,
+      "tasaUSD": _tasaBCVActiva,
+      "tasaUSDT": _tasaUSDTActiva,
       "cuentasDesglose": desglose,
       "comisionBs": comisionBs,
       "metodoPago": _metodoPagoEgreso,
@@ -1171,8 +1227,8 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       "montoBs": totalBs,
       "cuentaDestino": desglose.isNotEmpty ? desglose[0]['cuenta'] : "VARIAS",
       "moneda": "BS",
-      "tasaUSD": widget.tasaUSD,
-      "tasaUSDT": widget.tasaUSDT,
+      "tasaUSD": _tasaBCVActiva,
+      "tasaUSDT": _tasaUSDTActiva,
       "cuentasDesglose": desglose,
       "origenFondos": _origenFondosIngreso,
       "fechaOperacion": _fechaAString(_fechaIngreso),
@@ -1281,8 +1337,8 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       "concepto": _conceptoTraspasoCtrl.text.trim(),
       "comision": comision,
       "totalDebitar": totalDebitar,
-      "tasaUSD": widget.tasaUSD,
-      "tasaUSDT": widget.tasaUSDT,
+      "tasaUSD": _tasaBCVActiva,
+      "tasaUSDT": _tasaUSDTActiva,
       "fechaOperacion": _fechaAString(_fechaTraspaso),
     };
 
@@ -1369,8 +1425,8 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       "monedaDestino": _monedaDestinoCompra,
       "concepto": "Compra de $_monedaDestinoCompra",
       "tasaManual": esManual,
-      "tasaBCVUsada": widget.tasaUSD,
-      "tasaUSDTUsada": widget.tasaUSDT,
+      "tasaBCVUsada": _tasaBCVActiva,
+      "tasaUSDTUsada": _tasaUSDTActiva,
       "fechaOperacion": _fechaAString(_fechaCompra),
     };
 
@@ -1666,7 +1722,8 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       children: [
         _buildFechaSelector(
           fecha: _fechaEgreso,
-          onCambio: (d) => setState(() => _fechaEgreso = d),
+          onCambio: (d) =>
+              _actualizarTasasPorFecha(d, (nueva) => _fechaEgreso = nueva),
           color: Colors.red.shade700,
         ),
         const SizedBox(height: 6),
@@ -2147,7 +2204,8 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       children: [
         _buildFechaSelector(
           fecha: _fechaIngreso,
-          onCambio: (d) => setState(() => _fechaIngreso = d),
+          onCambio: (d) =>
+              _actualizarTasasPorFecha(d, (nueva) => _fechaIngreso = nueva),
           color: Colors.teal.shade700,
         ),
         const SizedBox(height: 6),
@@ -2465,7 +2523,8 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       children: [
         _buildFechaSelector(
           fecha: _fechaTraspaso,
-          onCambio: (d) => setState(() => _fechaTraspaso = d),
+          onCambio: (d) =>
+              _actualizarTasasPorFecha(d, (nueva) => _fechaTraspaso = nueva),
           color: Colors.orange.shade800,
         ),
         const SizedBox(height: 6),
@@ -2785,7 +2844,8 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       children: [
         _buildFechaSelector(
           fecha: _fechaCompra,
-          onCambio: (d) => setState(() => _fechaCompra = d),
+          onCambio: (d) =>
+              _actualizarTasasPorFecha(d, (nueva) => _fechaCompra = nueva),
           color: Colors.green.shade800,
         ),
         const SizedBox(height: 6),

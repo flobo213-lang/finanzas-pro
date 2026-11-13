@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 12-11-26 11.27am
+// Versión: 5.7.2 MODIFICADO DEEP 13-11-26 12.27m
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -84,6 +84,7 @@ function manejarPeticionApi(action, payload) {
       action === "obtenerCuentas" ||
       action === "obtenerMaestroCuentas" ||
       action === "obtenerTasasHistorico"||
+      action === "obtenerTasasPorFecha" ||
       action === "verificarEstadoDelDia"||
       action === "buscarTrabajador" ||
       action === "obtenerConsultasConFecha" ||
@@ -105,6 +106,16 @@ function manejarPeticionApi(action, payload) {
       else if (action === "obtenerCuentas") resG = obtenerCuentas();
       else if (action === "obtenerMaestroCuentas") resG = obtenerMaestroCuentas();
       else if (action === "obtenerTasasHistorico") resG = obtenerTasasHistorico();
+      else if (action === "obtenerTasasPorFecha") {
+        var fBuscar = payload.fecha || payload.fechaDesde || Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
+        try {
+          var bcv = obtenerTasa(fBuscar, "BCV");
+          var usdt = obtenerTasa(fBuscar, "USDT");
+          resG = { status: "SUCCESS", fecha: fBuscar, BCV: bcv, USDT: usdt };
+        } catch (e) {
+          resG = { status: "ERROR", mensaje: e.toString() };
+        }
+      }
       else if (action === "verificarEstadoDelDia") resG = verificarEstadoDelDia();
       else if (action === "buscarTrabajador") resG = buscarTrabajadorCompleto(payload);
       else if (action === "obtenerConsultasConFecha") resG = obtenerConsultasConFecha(payload);
@@ -298,48 +309,52 @@ function obtenerHojaTasas(ss) {
 }
 
 function obtenerTasa(fecha, fuente) {
+  var fuenteNorm = (fuente || "BCV").toString().toUpperCase().trim();
+  var fechaBusqueda = fecha ? fecha.toString().substring(0, 10) : Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
+  
   var ss = obtenerSpreadsheet();
   var sheet = ss.getSheetByName("TASAS");
-  if (!sheet) {
-    throw new Error("No existe la hoja TASAS.");
-  }
+  
+  if (sheet) {
+    var lastRow = sheet.getLastRow();
+    if (lastRow >= 2) {
+      var data = sheet.getRange(2, 1, lastRow - 1, 7).getValues();
+      var mejorTasa = null;
+      var mejorFecha = "";
 
-  var fechaBusqueda = _normalizarFecha(fecha, "America/Caracas");
-  if (!fechaBusqueda) {
-    fechaBusqueda = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
-  }
-  var fuenteBuscada = (fuente || "BCV").toString().trim().toUpperCase();
+      for (var i = 0; i < data.length; i++) {
+        var row = data[i];
+        var fRow = _normalizarFecha(row[0], "America/Caracas");
+        var fuenteRow = (row[1] || "").toString().trim().toUpperCase();
+        var valor = limpiarNumero(row[4]);
 
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    throw new Error("No hay tasas registradas en la hoja TASAS.");
-  }
-
-  var data = sheet.getRange(2, 1, lastRow - 1, 7).getValues();
-  var mejorTasa = null;
-  var mejorFecha = "";
-
-  for (var i = 0; i < data.length; i++) {
-    var row = data[i];
-    var fRow = _normalizarFecha(row[0], "America/Caracas");
-    var fuenteRow = (row[1] || "").toString().trim().toUpperCase();
-    var valor = limpiarNumero(row[4]);
-
-    if (fuenteRow === fuenteBuscada && fRow !== "" && fRow <= fechaBusqueda && valor > 0) {
-      if (mejorFecha === "" || fRow > mejorFecha) {
-        mejorFecha = fRow;
-        mejorTasa = valor;
-      } else if (fRow === mejorFecha) {
-        mejorTasa = valor;
+        if (fuenteRow === fuenteNorm && fRow !== "" && fRow <= fechaBusqueda && valor > 0) {
+          if (mejorFecha === "" || fRow > mejorFecha) {
+            mejorFecha = fRow;
+            mejorTasa = valor;
+          }
+        }
       }
+      if (mejorTasa !== null && mejorTasa > 0) return mejorTasa;
     }
   }
 
-  if (mejorTasa === null || mejorTasa <= 0) {
-    throw new Error("No existe tasa registrada para fuente '" + fuenteBuscada + "' en la fecha " + fechaBusqueda + " o anterior.");
-  }
+  // Fallback 1: TASAS_HISTORICO
+  try {
+    var tf = obtenerTasaPorFecha(fechaBusqueda);
+    if (tf && tf[fuenteNorm] && tf[fuenteNorm] > 0) return tf[fuenteNorm];
+    if (tf && tf.BCV && tf.BCV > 0) return tf.BCV;
+  } catch (e) {}
 
-  return mejorTasa;
+  // Fallback 2: CONFIG (la tasa actual)
+  try {
+    var cfg = obtenerTasasConfig();
+    if (cfg && cfg.tasas && cfg.tasas[fuenteNorm] && cfg.tasas[fuenteNorm] > 0) return cfg.tasas[fuenteNorm];
+    if (cfg && cfg.tasas && cfg.tasas.BCV && cfg.tasas.BCV > 0) return cfg.tasas.BCV;
+    if (cfg && cfg.tasaUSD && cfg.tasaUSD > 0) return cfg.tasaUSD;
+  } catch (e) {}
+  
+  return 1.0;
 }
 
 function actualizarTasas(payload) {
@@ -1693,61 +1708,55 @@ function registrarOperacion(payload) {
     } catch (e) {}
   }
 
-  var cuentaComision = "";
+    var cuentaComision = "";
   var comisionNativa = 0;
   if (payload.cuentasDesglose && payload.cuentasDesglose.length > 0) {
-    var cuentasTxt = [];
     for (var k = 0; k < payload.cuentasDesglose.length; k++) {
       var it = payload.cuentasDesglose[k];
       var ctaD = it.cuenta || "Caja Efectivo Bs";
       var montoNat = limpiarNumero(it.monto || 0);
       var monedaNat = (it.moneda || "BS").toString().toUpperCase();
-      if (k === 0) {
-        cuentaComision = ctaD;
-        if (monedaNat === "USD") comisionNativa = comisionBs / (tasaUSD || 1);
-        else if (monedaNat === "USDT") comisionNativa = comisionBs / (tasaUSDT || 1);
-        else comisionNativa = comisionBs;
-      }
-      if (montoNat > 0) {
-        if (!noAfectaSaldo) {
-          var saldoD = obtenerSaldoCuenta(sheetSaldos, ctaD);
-          var requerido = montoNat + (k === 0 ? comisionNativa : 0);
-          
-          if (saldoD < requerido) {
-            origenFondos = "VENTA_DIA"; 
-            actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, saldoD, false);
-          } else {
-            actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, montoNat, false);
-          }
-        }
-        // AQUI EL CAMBIO: Solo guardamos el nombre de la cuenta para el ORIGEN
-        cuentasTxt.push(ctaD); 
-      }
-    }
-    cuentaSalida = cuentasTxt.join(" | ");
+      if (montoNat <= 0) continue;
 
-    if (comisionNativa > 0 && cuentaComision !== "" && !noAfectaSaldo) {
-      actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaComision, comisionNativa, false);
-      // ELIMINAMOS ESTA LÍNEA: cuentaSalida += " | Comisión: " + comisionNativa.toFixed(2);
+      // FIX USDT: Si la cuenta es divisa, convertir el monto a su moneda nativa
+      var montoARestar = montoNat;
+      if (monedaNat === "USDT" && tasaUSDT > 0) montoARestar = montoNat / tasaUSDT;
+      else if (monedaNat === "USD" && tasaUSD > 0) montoARestar = montoNat / tasaUSD;
+
+      var comNativa = 0;
+      if (k === 0 && comisionBs > 0) {
+        comNativa = comisionBs;
+        if (monedaNat === "USD") comNativa = comisionBs / (tasaUSD || 1);
+        else if (monedaNat === "USDT") comNativa = comisionBs / (tasaUSDT || 1);
+      }
+
+      if (!noAfectaSaldo) {
+        var saldoD = obtenerSaldoCuenta(sheetSaldos, ctaD);
+        var requerido = montoARestar + (k === 0 ? comNativa : 0);
+        if (saldoD < requerido) {
+          origenFondos = "VENTA_DIA"; 
+          actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, saldoD, false);
+        } else {
+          actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, montoARestar, false);
+        }
+        if (comNativa > 0) actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, comNativa, false);
+      }
     }
   } else {
-    // === NUEVO: mismo flag aplica a ruta sin desglose ===
+    // Ruta normal sin desglose
     if (!noAfectaSaldo) {
       var saldoDisponible = obtenerSaldoCuenta(sheetSaldos, cuentaSalida);
       var requeridoTotal = montoTotal + comisionBs;
-      
       if (saldoDisponible < requeridoTotal) {
-        // AUTO-ASIGNACIÓN: Tomar el faltante de la Venta del Día
         origenFondos = "VENTA_DIA";
-        actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, saldoDisponible, false); // Deja la cuenta en 0
+        actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, saldoDisponible, false); 
       } else {
         actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, montoTotal, false);
-        if (comisionBs > 0) {
-          actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, comisionBs, false);
-        }
+        if (comisionBs > 0) actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, comisionBs, false);
       }
     }
   }  
+
   // === NUEVO: marcar en concepto si es informativo ===
   if (noAfectaSaldo) {
     concepto = concepto + " | [INFORMATIVO - no afecta saldo]";
@@ -1764,13 +1773,34 @@ var montoBsOp = (payload.moneda === "USD" || payload.moneda === "USDT") ? (monto
   var destinoReal = payload.proveedor || payload.tercero || categoria;
   if (destinoReal === "VARIAS") destinoReal = "";
 
-  sheetHistorial.appendRow([
-    idTx, fechaTx, tipoOperacion, cuentaSalida, destinoReal,
-    montoTotal, "BS", montoTotal, comisionBs,
-    concepto,
-    tasaUSD, tasaUSDT, categoria, parteDelCierre, origenFondos, "",
-    tasaFinalOp, fuenteFinalOp, montoBsOp
-  ]);
+  if (payload.cuentasDesglose && payload.cuentasDesglose.length > 0) {
+    for (var k = 0; k < payload.cuentasDesglose.length; k++) {
+      var it = payload.cuentasDesglose[k];
+      var ctaD = it.cuenta || "Caja Efectivo Bs";
+      var montoNat = limpiarNumero(it.monto || 0);
+      var monedaNat = (it.moneda || "BS").toString().toUpperCase();
+      if (montoNat <= 0) continue;
+      
+      var idTxPart = k === 0 ? idTx : "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
+      var comPart = k === 0 ? comisionBs : 0;
+      
+      sheetHistorial.appendRow([
+        idTxPart, fechaTx, tipoOperacion, ctaD, destinoReal,
+        montoNat, monedaNat, montoNat, comPart,
+        concepto,
+        tasaUSD, tasaUSDT, categoria, parteDelCierre, origenFondos, "",
+        tasaFinalOp, fuenteFinalOp, montoNat
+      ]);
+    }
+  } else {
+    sheetHistorial.appendRow([
+      idTx, fechaTx, tipoOperacion, cuentaSalida, destinoReal,
+      montoTotal, "BS", montoTotal, comisionBs,
+      concepto,
+      tasaUSD, tasaUSDT, categoria, parteDelCierre, origenFondos, "",
+      tasaFinalOp, fuenteFinalOp, montoBsOp
+    ]);
+  }
 
   // === MARCAR PENDIENTE COMO PAGADO SI SE PROPORCIONÓ ID DE PENDIENTE ===
   if (payload.idPendiente && payload.idPendiente.toString().trim() !== "") {
@@ -1934,8 +1964,9 @@ function registrarTraspaso(payload) {
   var tipoTraspaso = payload.tipoTraspaso || "OTRO_BANCO";
   var concepto = payload.concepto || "Traspaso entre cuentas";
   var origenFondos = (payload.origenFondos || "ACUMULADO").toString().toUpperCase();
-  var tasaUSD = limpiarNumero(payload.tasaUSD || 0);
-  var tasaUSDT = limpiarNumero(payload.tasaUSDT || 0);
+  var tasasReales = _resolverTasas(payload);
+  var tasaUSD = tasasReales.tasaUSD;
+  var tasaUSDT = tasasReales.tasaUSDT;
 
   if (montoOrigen <= 0) return { status: "ERROR", mensaje: "Monto inválido." };
   if (cuentaOrigen === "" || cuentaDestino === "") {
@@ -1985,11 +2016,8 @@ function registrarTraspaso(payload) {
     concepto = concepto + " | IDEMP:" + idempotenciaKey;
   }
 
-  var fechaTrStr = Utilities.formatDate(fechaTx, "America/Caracas", "yyyy-MM-dd");
-  var fuenteBuscadaTr = (payload.fuenteTasa || payload.fuente || "BCV").toString().toUpperCase();
-  var tasaRefTr = obtenerTasa(fechaTrStr, fuenteBuscadaTr);
-  var tasaFinalTr = (tasaUSD > 0) ? tasaUSD : tasaRefTr;
-  var fuenteFinalTr = (tasaUSD > 0) ? "MANUAL" : fuenteBuscadaTr;
+  var tasaFinalTr = tasaUSD;
+  var fuenteFinalTr = "SISTEMA";
   var montoBsTr = limpiarNumero(montoBs > 0 ? montoBs : (monedaOrigen === "USD" ? montoOrigen * tasaFinalTr : montoOrigen));
 
   sheetHistorial.appendRow([
@@ -2041,7 +2069,6 @@ function registrarCargoFijoMensual(payload) {
 // ============================================================================
 // VERIFICAR ESTADO DEL DÍA
 // ============================================================================
-
 function verificarEstadoDelDia() {
   var tz = "America/Caracas";
   var hoy = new Date();
@@ -2213,7 +2240,8 @@ function registrarIngreso(payload) {
   var categoria = payload.categoria || "VENTA";
   var parteDelCierre = (categoria === "VENTA" || categoria === "COBRO_CLIENTE") ? "S" : "N";
   var origenFondos = (payload.origenFondos || "VENTA_DIA").toString().toUpperCase();
-  var tasaUSD = limpiarNumero(payload.tasaUSD || 0);
+  var tasasReales = _resolverTasas(payload);
+  var tasaUSD = tasasReales.tasaUSD;
   var tasaUSDT = limpiarNumero(payload.tasaUSDT || 0);
 
   if (montoBs <= 0) return { status: "ERROR", mensaje: "Monto inválido." };
@@ -2247,11 +2275,8 @@ function registrarIngreso(payload) {
     concepto = concepto + " | IDEMP:" + idempotenciaKey;
   }
 
-  var fechaIngStr = Utilities.formatDate(fechaTx, "America/Caracas", "yyyy-MM-dd");
-  var fuenteBuscadaIng = (payload.fuenteTasa || payload.fuente || "BCV").toString().toUpperCase();
-  var tasaRefIng = obtenerTasa(fechaIngStr, fuenteBuscadaIng);
-  var tasaFinalIng = (tasaUSD > 0) ? tasaUSD : tasaRefIng;
-  var fuenteFinalIng = (tasaUSD > 0) ? "MANUAL" : fuenteBuscadaIng;
+  var tasaFinalIng = tasaUSD;
+  var fuenteFinalIng = "SISTEMA";
 
   sheetHistorial.appendRow([
     idTx, fechaTx, "INGRESO", "VARIAS", cuentaDestino,
@@ -3314,9 +3339,8 @@ function procesarOperacionTrabajador(payload) {
   if (descuentoDeudaUSD > 0.01) concepto += " | Desc. préstamo: $" + descuentoDeudaUSD.toFixed(2) + " USD";
   if (descuentoFaltasUSD > 0.01) concepto += " | Desc. faltas: $" + descuentoFaltasUSD.toFixed(2) + " USD";
 
-  var fechaProcStr = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
-  var tasaFinalProc = (tasaUSD > 0) ? tasaUSD : obtenerTasa(fechaProcStr, "BCV");
-  var fuenteFinalProc = (tasaUSD > 0) ? "MANUAL" : "BCV";
+  var tasaFinalProc = tasaUSD;
+  var fuenteFinalProc = "SISTEMA";
 
   sheetHistorial.appendRow([
     idTx, new Date(), esLiquidacion ? "LIQUIDACION_FINAL" : "PAGO_NOMINA",
@@ -3396,6 +3420,7 @@ function obtenerDetalleRecibo(payload) {
   return { status: "ERROR", mensaje: "Recibo no encontrado para el idTx: " + idTx };
 }
 
+// ESTA ES LA FUNCIÓN BUENA (COPIAR Y PEGAR)
 function _resolverTasas(payload) {
   var fechaOp = payload.fechaOperacion || Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");
   var hoy = Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd");

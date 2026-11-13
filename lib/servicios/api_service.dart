@@ -228,12 +228,32 @@ class ApiService {
     }
     final cacheViejo = await CacheService.leerTasas();
     if (cacheViejo != null) return cacheViejo;
+
     return {
       "status": "SUCCESS",
       "tasaUSD": 827.74,
       "tasaUSDT": 965.00,
     };
-  }
+  } // <--- ESTA ES LA LLAVE QUE FALTABA (Cierra obtenerTasas)
+
+  static Future<Map<String, dynamic>> obtenerTasasPorFecha(String fecha) async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse("$urlAppScript?action=obtenerTasasPorFecha&fecha=$fecha"),
+            headers: _headersCORS,
+          )
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) return decoded;
+      }
+    } catch (e) {
+      if (kDebugMode) print("Error obtenerTasasPorFecha: $e");
+    }
+    return {"status": "ERROR", "mensaje": "No se pudo obtener tasa histórica"};
+  } // <--- ESTA LLAVE CIERRA LA NUEVA FUNCION
 
   static Future<Map<String, dynamic>> obtenerSaldos() async {
     if (await CacheService.saldosFrescos()) {
@@ -286,9 +306,10 @@ class ApiService {
     };
   }
 
-static Future<Map<String, dynamic>> buscarTrabajadorCompleto(String cedula) async {
-  return await _buscarTrabajadorServidor(cedula);
-}
+  static Future<Map<String, dynamic>> buscarTrabajadorCompleto(
+      String cedula) async {
+    return await _buscarTrabajadorServidor(cedula);
+  }
 
   static Future<Map<String, dynamic>> _buscarTrabajadorServidor(
       String cedula) async {
