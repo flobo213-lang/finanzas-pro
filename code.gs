@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 3.727 MODIFICADO DEEP 12-11-26 11.27am
+// Versión: 3.727 MODIFICADO DEEP 12-11-26 08.37am
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -1693,61 +1693,55 @@ function registrarOperacion(payload) {
     } catch (e) {}
   }
 
-  var cuentaComision = "";
+    var cuentaComision = "";
   var comisionNativa = 0;
   if (payload.cuentasDesglose && payload.cuentasDesglose.length > 0) {
-    var cuentasTxt = [];
     for (var k = 0; k < payload.cuentasDesglose.length; k++) {
       var it = payload.cuentasDesglose[k];
       var ctaD = it.cuenta || "Caja Efectivo Bs";
       var montoNat = limpiarNumero(it.monto || 0);
       var monedaNat = (it.moneda || "BS").toString().toUpperCase();
-      if (k === 0) {
-        cuentaComision = ctaD;
-        if (monedaNat === "USD") comisionNativa = comisionBs / (tasaUSD || 1);
-        else if (monedaNat === "USDT") comisionNativa = comisionBs / (tasaUSDT || 1);
-        else comisionNativa = comisionBs;
-      }
-      if (montoNat > 0) {
-        if (!noAfectaSaldo) {
-          var saldoD = obtenerSaldoCuenta(sheetSaldos, ctaD);
-          var requerido = montoNat + (k === 0 ? comisionNativa : 0);
-          
-          if (saldoD < requerido) {
-            origenFondos = "VENTA_DIA"; 
-            actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, saldoD, false);
-          } else {
-            actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, montoNat, false);
-          }
-        }
-        // AQUI EL CAMBIO: Solo guardamos el nombre de la cuenta para el ORIGEN
-        cuentasTxt.push(ctaD); 
-      }
-    }
-    cuentaSalida = cuentasTxt.join(" | ");
+      if (montoNat <= 0) continue;
 
-    if (comisionNativa > 0 && cuentaComision !== "" && !noAfectaSaldo) {
-      actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaComision, comisionNativa, false);
-      // ELIMINAMOS ESTA LÍNEA: cuentaSalida += " | Comisión: " + comisionNativa.toFixed(2);
+      // FIX USDT: Si la cuenta es divisa, convertir el monto a su moneda nativa
+      var montoARestar = montoNat;
+      if (monedaNat === "USDT" && tasaUSDT > 0) montoARestar = montoNat / tasaUSDT;
+      else if (monedaNat === "USD" && tasaUSD > 0) montoARestar = montoNat / tasaUSD;
+
+      var comNativa = 0;
+      if (k === 0 && comisionBs > 0) {
+        comNativa = comisionBs;
+        if (monedaNat === "USD") comNativa = comisionBs / (tasaUSD || 1);
+        else if (monedaNat === "USDT") comNativa = comisionBs / (tasaUSDT || 1);
+      }
+
+      if (!noAfectaSaldo) {
+        var saldoD = obtenerSaldoCuenta(sheetSaldos, ctaD);
+        var requerido = montoARestar + (k === 0 ? comNativa : 0);
+        if (saldoD < requerido) {
+          origenFondos = "VENTA_DIA"; 
+          actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, saldoD, false);
+        } else {
+          actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, montoARestar, false);
+        }
+        if (comNativa > 0) actualizarSaldoEnHojaSaldos(sheetSaldos, ctaD, comNativa, false);
+      }
     }
   } else {
-    // === NUEVO: mismo flag aplica a ruta sin desglose ===
+    // Ruta normal sin desglose
     if (!noAfectaSaldo) {
       var saldoDisponible = obtenerSaldoCuenta(sheetSaldos, cuentaSalida);
       var requeridoTotal = montoTotal + comisionBs;
-      
       if (saldoDisponible < requeridoTotal) {
-        // AUTO-ASIGNACIÓN: Tomar el faltante de la Venta del Día
         origenFondos = "VENTA_DIA";
-        actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, saldoDisponible, false); // Deja la cuenta en 0
+        actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, saldoDisponible, false); 
       } else {
         actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, montoTotal, false);
-        if (comisionBs > 0) {
-          actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, comisionBs, false);
-        }
+        if (comisionBs > 0) actualizarSaldoEnHojaSaldos(sheetSaldos, cuentaSalida, comisionBs, false);
       }
     }
   }  
+
   // === NUEVO: marcar en concepto si es informativo ===
   if (noAfectaSaldo) {
     concepto = concepto + " | [INFORMATIVO - no afecta saldo]";
@@ -1764,13 +1758,34 @@ var montoBsOp = (payload.moneda === "USD" || payload.moneda === "USDT") ? (monto
   var destinoReal = payload.proveedor || payload.tercero || categoria;
   if (destinoReal === "VARIAS") destinoReal = "";
 
-  sheetHistorial.appendRow([
-    idTx, fechaTx, tipoOperacion, cuentaSalida, destinoReal,
-    montoTotal, "BS", montoTotal, comisionBs,
-    concepto,
-    tasaUSD, tasaUSDT, categoria, parteDelCierre, origenFondos, "",
-    tasaFinalOp, fuenteFinalOp, montoBsOp
-  ]);
+  if (payload.cuentasDesglose && payload.cuentasDesglose.length > 0) {
+    for (var k = 0; k < payload.cuentasDesglose.length; k++) {
+      var it = payload.cuentasDesglose[k];
+      var ctaD = it.cuenta || "Caja Efectivo Bs";
+      var montoNat = limpiarNumero(it.monto || 0);
+      var monedaNat = (it.moneda || "BS").toString().toUpperCase();
+      if (montoNat <= 0) continue;
+      
+      var idTxPart = k === 0 ? idTx : "TX-" + Math.floor(Math.random() * 900000000 + 100000000);
+      var comPart = k === 0 ? comisionBs : 0;
+      
+      sheetHistorial.appendRow([
+        idTxPart, fechaTx, tipoOperacion, ctaD, destinoReal,
+        montoNat, monedaNat, montoNat, comPart,
+        concepto,
+        tasaUSD, tasaUSDT, categoria, parteDelCierre, origenFondos, "",
+        tasaFinalOp, fuenteFinalOp, montoNat
+      ]);
+    }
+  } else {
+    sheetHistorial.appendRow([
+      idTx, fechaTx, tipoOperacion, cuentaSalida, destinoReal,
+      montoTotal, "BS", montoTotal, comisionBs,
+      concepto,
+      tasaUSD, tasaUSDT, categoria, parteDelCierre, origenFondos, "",
+      tasaFinalOp, fuenteFinalOp, montoBsOp
+    ]);
+  }
 
   // === MARCAR PENDIENTE COMO PAGADO SI SE PROPORCIONÓ ID DE PENDIENTE ===
   if (payload.idPendiente && payload.idPendiente.toString().trim() !== "") {
@@ -2041,7 +2056,6 @@ function registrarCargoFijoMensual(payload) {
 // ============================================================================
 // VERIFICAR ESTADO DEL DÍA
 // ============================================================================
-
 function verificarEstadoDelDia() {
   var tz = "America/Caracas";
   var hoy = new Date();
