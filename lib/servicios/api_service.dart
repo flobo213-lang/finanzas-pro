@@ -8,11 +8,7 @@ import 'queue_service.dart';
 
 class ApiService {
   static const String urlAppScript =
-          "https://script.google.com/macros/s/AKfycbxHbyaEfNTGUfiP9-JlqVfvmdtbUNGDyexhg7XKZ7KA02AG6zHWOBnwxj4Q9KTeYjP5AQ/exec";
-
-  static const Map<String, String> _headersCORS = {
-    'Content-Type': 'text/plain;charset=utf-8',
-  };
+      "https://script.google.com/macros/s/AKfycbxHbyaEfNTGUfiP9-JlqVfvmdtbUNGDyexhg7XKZ7KA02AG6zHWOBnwxj4Q9KTeYjP5AQ/exec";
 
   // ==========================================================================
   // POST CON MANEJO DE 302 Y COLA DE PENDIENTES
@@ -37,7 +33,7 @@ class ApiService {
 
       if (kDebugMode) print("=== ENVIANDO POST $action ===");
 
-      // AQUÍ ESTÁ EL CAMBIO: Usamos http.post en lugar de http.get
+      // Usamos http.post en lugar de http.get para evitar límite de URL
       final response = await http.post(
         Uri.parse(urlAppScript), // La URL va limpia, sin parámetros
         body: body,
@@ -217,7 +213,6 @@ class ApiService {
       final response = await http
           .get(
             Uri.parse("$urlAppScript?action=obtenerTasas"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
@@ -238,14 +233,13 @@ class ApiService {
       "tasaUSD": 827.74,
       "tasaUSDT": 965.00,
     };
-  } // <--- ESTA ES LA LLAVE QUE FALTABA (Cierra obtenerTasas)
+  }
 
   static Future<Map<String, dynamic>> obtenerTasasPorFecha(String fecha) async {
     try {
       final response = await http
           .get(
             Uri.parse("$urlAppScript?action=obtenerTasasPorFecha&fecha=$fecha"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 30));
 
@@ -257,7 +251,7 @@ class ApiService {
       if (kDebugMode) print("Error obtenerTasasPorFecha: $e");
     }
     return {"status": "ERROR", "mensaje": "No se pudo obtener tasa histórica"};
-  } // <--- ESTA LLAVE CIERRA LA NUEVA FUNCION
+  }
 
   static Future<Map<String, dynamic>> obtenerSaldos() async {
     if (await CacheService.saldosFrescos()) {
@@ -268,7 +262,6 @@ class ApiService {
       final response = await http
           .get(
             Uri.parse("$urlAppScript?action=obtenerSaldos"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
@@ -291,7 +284,6 @@ class ApiService {
       final response = await http
           .get(
             Uri.parse("$urlAppScript?action=verificarEstadoDelDia"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
@@ -321,7 +313,6 @@ class ApiService {
       final response = await http
           .get(
             Uri.parse("$urlAppScript?action=buscarTrabajador&cedula=$cedula"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
@@ -356,7 +347,6 @@ class ApiService {
             .get(
               Uri.parse(
                   "$urlAppScript?action=obtenerResumenGerencial&fecha=$fecha"),
-              headers: _headersCORS,
             )
             .timeout(const Duration(seconds: 120));
         if (response.statusCode == 200) {
@@ -397,7 +387,6 @@ class ApiService {
           .get(
             Uri.parse(
                 "$urlAppScript?action=obtenerConsultasConFecha&fechaDesde=$fechaDesde&fechaHasta=$fh"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
@@ -428,7 +417,7 @@ class ApiService {
     try {
       final url = "$urlAppScript?action=obtenerPendientes&todos=$todos";
       final response = await http
-          .get(Uri.parse(url), headers: _headersCORS)
+          .get(Uri.parse(url))
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
@@ -446,7 +435,7 @@ class ApiService {
     try {
       final url = "$urlAppScript?action=obtenerPendientesPorPagar";
       final response = await http
-          .get(Uri.parse(url), headers: _headersCORS)
+          .get(Uri.parse(url))
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
@@ -477,7 +466,6 @@ class ApiService {
           .get(
             Uri.parse(
                 "$urlAppScript?action=obtenerResumenGerencial&fecha=$fecha"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
