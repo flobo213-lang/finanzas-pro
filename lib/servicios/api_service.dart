@@ -8,7 +8,7 @@ import 'queue_service.dart';
 
 class ApiService {
   static const String urlAppScript =
-      "https://script.google.com/macros/s/AKfycbzRs6qTqsJN9yFS239aAM9LSYv6WPDqe_ZhjaYpw4Em-EgHuS9CtqHKBBJxMd16cQVVwg/exec";
+          "https://script.google.com/macros/s/AKfycbxHbyaEfNTGUfiP9-JlqVfvmdtbUNGDyexhg7XKZ7KA02AG6zHWOBnwxj4Q9KTeYjP5AQ/exec";
 
   static const Map<String, String> _headersCORS = {
     'Content-Type': 'text/plain;charset=utf-8',
