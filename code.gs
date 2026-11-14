@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 5.7.2 MODIFICADO DEEP 13-11-26 09.47pm
+// Versión: 5.7.2 MODIFICADO DEEP 13-11-26 12.47m
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -993,6 +993,22 @@ function registrarCierreJornada(payload) {
   }
   var fechaOp = Utilities.formatDate(fechaCierre, "America/Caracas", "yyyy-MM-dd");
   
+    // ===== CANDADO ANTI-DUPLICIDAD DE CIERRES =====
+  var histCheckCierre = sheetHistorial.getDataRange().getValues();
+  for (var hc2 = 1; hc2 < histCheckCierre.length; hc2++) {
+    var tipoHC2 = (histCheckCierre[hc2][2] || "").toString().toUpperCase();
+    var fechaHC2 = _normalizarFecha(histCheckCierre[hc2][1], "America/Caracas");
+    
+    // Si ya hay un cierre procesado para la misma fecha, bloquea
+    if (fechaHC2 === fechaOp && tipoHC2.indexOf("CIERRE") === 0) {
+      return { 
+        status: "ERROR", 
+        mensaje: "Ya existe un cierre registrado para la fecha " + fechaOp + ". No se puede duplicar." 
+      };
+    }
+  }
+  // ===== FIN CANDADO =====
+
   // === AUTO-CÁLCULO DE GASTOS Y PRÉSTAMOS DESDE LA VENTA DEL DÍA ===
   var totalVentaDiaUsado = 0;
   var histCheck = sheetHistorial.getDataRange().getValues();
@@ -1267,7 +1283,7 @@ var estadoCierre = descuadreBs < 0 ? "FALTANTE" : "CERRADO";
 
   // ===== FALTANTE / SOBRANTE AUTOMÁTICO =====
   if (Math.abs(descuadreBs) > 50.00) {
-    var esFaltante = descuadreBs < 0 || diferencia < 0;
+    var esFaltante = descuadreBs < 0;
     var categoriaAuto = esFaltante ? "FALTANTE" : "AJUSTE";
     var montoAuto = Math.abs(descuadreBs);
     var observacion = (payload.observacion || "").toString().trim();
