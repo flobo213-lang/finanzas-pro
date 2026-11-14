@@ -10,19 +10,21 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-    uuid: ^4.5.1
-    synchronized: ^3.1.0
-    
+
+  # Paquetes nuevos agregados (alineados a la izquierda, dos espacios)
+  uuid: ^4.5.1
+  synchronized: ^3.1.0
+
   # Gestor de estado global
   provider: ^6.1.1
 
-  # Cliente de conexión HTTP a Apps Script / Drive
+  # Cliente de conexión HTTP
   http: ^1.2.0
 
   # Persistencia de datos locales
   shared_preferences: ^2.2.2
 
-  # Formato de números y fechas (Moneda/Fechas)
+  # Formato de números y fechas
   intl: ^0.19.0
 
   # Captura y compartición de reportes
