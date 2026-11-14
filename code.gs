@@ -1,6 +1,6 @@
 // ============================================================================
 // FINANZAS PRO — BACKEND
-// Versión: 5.7.2 MODIFICADO DEEP 13-11-26 12.27m
+// Versión: 5.7.2 MODIFICADO DEEP 13-11-26 09.47pm
 // ============================================================================
 
 var SPREADSHEET_ID = "1hUosJCAw9Xtg1pR5zku5TDpIiiji0cM6TDr-COE-Rqc";
@@ -66,15 +66,23 @@ function extraerDatosPeticion(e) {
 }
 
 function doGet(e) {
-  var req = extraerDatosPeticion(e);
-  if (req.action !== "") return manejarPeticionApi(req.action, req.payload);
-  return responderJSON({ status: "OK", mensaje: "Servidor Activo (GET)" });
+  try {
+    var req = extraerDatosPeticion(e);
+    if (req.action !== "") return manejarPeticionApi(req.action, req.payload);
+    return responderJSON({ status: "OK", mensaje: "Servidor Activo (GET)" });
+  } catch (err) {
+    return responderJSON({ status: "ERROR", mensaje: "Excepción GET: " + err.toString() });
+  }
 }
 
 function doPost(e) {
-  var req = extraerDatosPeticion(e);
-  if (req.action !== "") return manejarPeticionApi(req.action, req.payload);
-  return responderJSON({ status: "OK", mensaje: "Servidor Activo (POST)" });
+  try {
+    var req = extraerDatosPeticion(e);
+    if (req.action !== "") return manejarPeticionApi(req.action, req.payload);
+    return responderJSON({ status: "OK", mensaje: "Servidor Activo (POST)" });
+  } catch (err) {
+    return responderJSON({ status: "ERROR", mensaje: "Excepción POST: " + err.toString() });
+  }
 }
 
 function manejarPeticionApi(action, payload) {
@@ -169,8 +177,8 @@ function manejarPeticionApi(action, payload) {
     return responderJSON(res);
   } catch (err) {
     return responderJSON({ status: "ERROR", mensaje: "Excepción POST: " + err.toString() });
-  } finally {
-    lock.releaseLock();
+    } finally {
+    if (lock.hasLock()) lock.releaseLock();
   }
 }
 
@@ -1543,20 +1551,39 @@ function auditarIntegridadSaldos(dryRun) {
 function actualizarSaldosYTasas(payload) {
   var ss = obtenerSpreadsheet();
   var resultado = { status: "SUCCESS", actualizados: { tasas: 0, saldos: 0 } };
+  var key = (payload.idempotenciaKey || "").toString().trim();
 
-  // ===== PASO 1: Detectar descuadre en saldos ANTES de guardar =====
+  // === IDEMPOTENCIA DE CONCILIACIÓN (B21) ===
+  if (key !== "") {
+    var prev = _conciliacionYaProcesada(key);
+    if (prev) {
+      return {
+        status: "SUCCESS", exito: true, duplicado: true,
+        autoAjustados: [], incidentes: [],
+        mensaje: "Conciliación ya procesada (" + prev.accion + ")",
+        previo: prev
+      };
+    }
+  }
+
+  // === PASO 1: Detectar y clasificar diferencias ===
+  var autoAjustables = [];
+  var incidentes = [];
+  var TOLERANCIA_DETECCION = 0.01;
+
   if (payload.saldos && typeof payload.saldos === "object") {
     var sheetSaldos = ss.getSheetByName("SALDOS");
     if (!sheetSaldos) return { status: "ERROR", mensaje: "No existe SALDOS" };
 
     var dataS = sheetSaldos.getDataRange().getValues();
-    var diferencias = [];
-    var TOLERANCIA = 0.01;
+    var monedas = payload.monedas || {};
+    var tasaUSD = limpiarNumero(payload.tasaUSD || 0);
+    var tasaUSDT = limpiarNumero(payload.tasaUSDT || 0);
+    var diferenciasRaw = [];
 
     for (var nombreCuenta in payload.saldos) {
       var montoNuevo = limpiarNumero(payload.saldos[nombreCuenta]);
       var montoActual = null;
-
       for (var j = 1; j < dataS.length; j++) {
         var ctaFila = dataS[j][0] ? dataS[j][0].toString().trim() : "";
         if (ctaFila.toUpperCase() === nombreCuenta.toString().trim().toUpperCase()) {
@@ -1564,48 +1591,99 @@ function actualizarSaldosYTasas(payload) {
           break;
         }
       }
-
-      if (montoActual === null) continue;
-
+      
+      // B20: BLINDAJE — cuenta inexistente → ERROR explícito. No se crea.
+      if (montoActual === null) {
+        return {
+          status: "ERROR",
+          mensaje: "Cuenta inexistente en SALDOS: '" + nombreCuenta +
+            "'. El modal de conciliación no crea cuentas nuevas."
+        };
+      }
+      
       var dif = montoNuevo - montoActual;
-      if (Math.abs(dif) > TOLERANCIA) {
-        diferencias.push({
-          cuenta: nombreCuenta,
-          enSistema: montoActual,
-          enReal: montoNuevo,
-          diferencia: dif
+      if (Math.abs(dif) > TOLERANCIA_DETECCION) {
+        diferenciasRaw.push({
+          cuenta: nombreCuenta, enSistema: montoActual,
+          enReal: montoNuevo, diferencia: dif
         });
       }
     }
+    
+    var clasif = _clasificarDiferencias(diferenciasRaw, monedas, tasaUSD, tasaUSDT);
+    autoAjustables = clasif.autoAjustables;
+    incidentes = clasif.incidentes;
+  }
 
-    if (diferencias.length > 0) {
-      return {
-        status: "DESCUADRE",
-        mensaje: "Hay " + diferencias.length +
-                 " cuenta(s) descuadrada(s). Registra las operaciones faltantes antes de actualizar.",
-        diferencias: diferencias
-      };
+  // === PASO 2: Decisión transaccional (#3) ===
+  if (incidentes.length > 0) {
+    for (var k = 0; k < incidentes.length; k++) {
+      _registrarIncidenteAUDIT(incidentes[k], key);
     }
+    return {
+      status: "DESCUADRE",
+      mensaje: "Hay " + incidentes.length + " cuenta(s) fuera de umbral. " +
+               "No se auto-ajustó ninguna. Resuelve los incidentes primero.",
+      diferencias: incidentes,
+      autoAjustados: [],
+      incidentesCount: incidentes.length,
+      autoAjustablesCount: autoAjustables.length
+    };
+  }
 
-    // Sin descuadres → aplicar (solo cuentas nuevas o iguales)
-    for (var nombreCuenta in payload.saldos) {
-      var montoNuevo = limpiarNumero(payload.saldos[nombreCuenta]);
-      var encontrado = false;
-      for (var j = 1; j < dataS.length; j++) {
-        var ctaFila = dataS[j][0] ? dataS[j][0].toString().trim() : "";
-        if (ctaFila.toUpperCase() === nombreCuenta.toString().trim().toUpperCase()) {
-          sheetSaldos.getRange(j + 1, 2).setValue(montoNuevo);
-          encontrado = true; resultado.actualizados.saldos++; break;
+  // === PASO 3: Aplicar auto-ajustes (#4 simétrico) ===
+  var autoAjustesAplicados = [];
+  var tasaUSD = limpiarNumero(payload.tasaUSD || 0);
+  var tasaUSDT = limpiarNumero(payload.tasaUSDT || 0);
+  
+  if (autoAjustables.length > 0) {
+    var sheetHistorial = ss.getSheetByName("HISTORIAL");
+    if (!sheetHistorial) return { status: "ERROR", mensaje: "No existe HISTORIAL" };
+    var fechaTx = new Date();
+    
+    for (var a = 0; a < autoAjustables.length; a++) {
+      var aut = autoAjustables[a];
+      var idTxAjuste = "TX-AJ-" + Math.floor(Math.random() * 900000000 + 100000000);
+      var tipoOp = aut.diferencia < 0 ? "EGRESO" : "INGRESO";
+      var montoAbs = Math.abs(aut.diferencia);
+      var montoBsEq = montoAbs * (aut.moneda === "$" ? tasaUSD : aut.moneda === "₮" ? tasaUSDT : 1);
+      
+      sheetHistorial.appendRow([
+        idTxAjuste, fechaTx, tipoOp, aut.cuenta, "AJUSTE_CONCILIACION",
+        montoAbs, aut.moneda, montoAbs, 0,
+        "Auto-ajuste conciliación: diff " + aut.diferencia.toFixed(2) + " " +
+          aut.moneda + " (umbral " + aut.umbralEfectivoBs.toFixed(2) + " Bs)",
+        tasaUSD, tasaUSDT, "AJUSTE_CONCILIACION", "N", "ACUMULADO", "",
+        tasaUSD, "BCV", montoBsEq,
+        key + "_" + aut.cuenta
+      ]);
+      
+      _registrarAutoAjusteAUDIT(aut, key, idTxAjuste);
+      autoAjustesAplicados.push({
+        cuenta: aut.cuenta, diferencia: aut.diferencia,
+        moneda: aut.moneda, idTx: idTxAjuste, tipoOperacion: tipoOp
+      });
+    }
+  }
+
+  // === PASO 4: Aplicar saldos ===
+  if (payload.saldos && typeof payload.saldos === "object") {
+    var sheetSaldos2 = ss.getSheetByName("SALDOS");
+    var dataS2 = sheetSaldos2.getDataRange().getValues();
+    for (var nombreCuenta2 in payload.saldos) {
+      var montoNuevo2 = limpiarNumero(payload.saldos[nombreCuenta2]);
+      for (var j2 = 1; j2 < dataS2.length; j2++) {
+        var ctaFila2 = dataS2[j2][0] ? dataS2[j2][0].toString().trim() : "";
+        if (ctaFila2.toUpperCase() === nombreCuenta2.toString().trim().toUpperCase()) {
+          sheetSaldos2.getRange(j2 + 1, 2).setValue(montoNuevo2);
+          resultado.actualizados.saldos++;
+          break;
         }
-      }
-      if (!encontrado) {
-        sheetSaldos.appendRow([nombreCuenta, montoNuevo]);
-        resultado.actualizados.saldos++;
       }
     }
   }
 
-  // ===== PASO 2: Guardar tasas en CONFIG y TASAS (vía actualizarTasas) =====
+  // === PASO 5: Guardar tasas ===
   if (payload.tasaUSD || payload.tasaUSDT || payload.tasaEUR || payload.tasaUSDTParalelo || payload.BCV || payload.USDT) {
     var resTasas = actualizarTasas(payload);
     if (resTasas.status === "SUCCESS") {
@@ -1613,7 +1691,16 @@ function actualizarSaldosYTasas(payload) {
     }
   }
 
-  return resultado;
+  return {
+    status: "SUCCESS", exito: true,
+    actualizados: resultado.actualizados,
+    autoAjustados: autoAjustesAplicados,
+    incidentes: [],
+    totalAjustes: autoAjustesAplicados.length,
+    mensaje: autoAjustesAplicados.length > 0
+      ? "Se aplicaron " + autoAjustesAplicados.length + " auto-ajuste(s)."
+      : "Saldos y tasas actualizados."
+  };
 }
 
 function buscarGastos(params) {
@@ -1625,6 +1712,7 @@ function buscarGastos(params) {
 }
 
 function registrarOperacion(payload) {
+  Logger.log("📦 PAYLOAD RECIBIDO DE FLUTTER: " + JSON.stringify(payload));
   var tasasReales = _resolverTasas(payload);
   var tasaUSD = tasasReales.tasaUSD;
   var tasaUSDT = tasasReales.tasaUSDT;
@@ -3809,4 +3897,192 @@ function corregirSaldosUSDTV11() {
   } else {
     SpreadsheetApp.getUi().alert("No se encontraron operaciones de USDT con montos en Bs.");
   }
+}
+function TEST_RegistrarOperacion() {
+  var payload = {
+    tipoOperacion: "EGRESO",
+    categoria: "GASTOS_PERSONALES",
+    concepto: "Prueba de error",
+    montoBsPagado: 10,
+    cuentaSalida: "Caja Efectivo Bs",
+    moneda: "BS",
+    tasaUSD: 1066.00,
+    tasaUSDT: 1140.00,
+    cuentasDesglose: [
+      { cuenta: "Caja Efectivo Bs", monto: 10, moneda: "BS", montoBs: 10 }
+    ],
+    comisionBs: 0,
+    metodoPago: "EFECTIVO",
+    fechaOperacion: Utilities.formatDate(new Date(), "America/Caracas", "yyyy-MM-dd")
+  };
+  
+  try {
+    var res = registrarOperacion(payload);
+    Logger.log("✅ RESULTADO OK: " + JSON.stringify(res));
+  } catch (error) {
+    Logger.log("❌ ERROR CAPTURADO: " + error.toString());
+    Logger.log("❌ LÍNEA DEL ERROR: " + error.stack);
+  }
+}
+function testHasLock() {
+  var lock = LockService.getScriptLock();
+  Logger.log("1. Antes de lock: " + lock.hasLock());
+  lock.waitLock(10000);
+  Logger.log("2. Después de lock: " + lock.hasLock());
+  Logger.log("3. En wrapper: " + lock.hasLock());
+  lock.releaseLock();
+  Logger.log("4. Después de release: " + lock.hasLock());
+}
+
+function migrarAuditLogConciliacion() {
+  var ss = obtenerSpreadsheet();
+  var sheet = ss.getSheetByName("AUDIT_LOG");
+  
+  if (!sheet) {
+    sheet = ss.insertSheet("AUDIT_LOG");
+    sheet.appendRow([
+      "timestamp", "accion", "idempotenciaKey", "idTxOriginal", "idTxIntentado", "detalle",
+      "monto_diff", "cuenta", "estado_conciliacion", "moneda"
+    ]);
+    sheet.getRange(1, 1, 1, 10).setFontWeight("bold");
+    Logger.log("✅ AUDIT_LOG creado con 10 columnas");
+    return;
+  }
+  
+  var headers = sheet.getRange(1, 1, 1, 10).getValues()[0];
+  var nuevasCols = [
+    { idx: 7,  nombre: "monto_diff" },
+    { idx: 8,  nombre: "cuenta" },
+    { idx: 9,  nombre: "estado_conciliacion" },
+    { idx: 10, nombre: "moneda" }
+  ];
+  
+  for (var i = 0; i < nuevasCols.length; i++) {
+    var col = nuevasCols[i];
+    if (!headers[col.idx - 1]) {
+      sheet.getRange(1, col.idx).setValue(col.nombre).setFontWeight("bold");
+    }
+  }
+  Logger.log("✅ AUDIT_LOG extendido a 10 columnas");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// A3 — HELPERS DE CONCILIACIÓN
+// ═══════════════════════════════════════════════════════════════════
+
+function _getConfigConciliacion() {
+  var props = PropertiesService.getScriptProperties();
+  return {
+    cap:      parseFloat(props.getProperty("CONCILIACION_UMBRAL_TOPE")     || "10000"),
+    revision: parseFloat(props.getProperty("CONCILIACION_UMBRAL_REVISION") || "1000")
+  };
+}
+
+function _calcularUmbralEfectivo(saldoSistemaBs) {
+  var cfg = _getConfigConciliacion();
+  var umbralAbs = 50.0;
+  var umbralRel = Math.abs(saldoSistemaBs) * 0.001;
+  return Math.min(Math.max(umbralAbs, umbralRel), cfg.cap);
+}
+
+function _clasificarDiferencias(diferencias, monedas, tasaUSD, tasaUSDT) {
+  var cfg = _getConfigConciliacion();
+  var autoAjustables = [];
+  var incidentes = [];
+  
+  for (var i = 0; i < diferencias.length; i++) {
+    var d = diferencias[i];
+    var moneda = monedas[d.cuenta] || "Bs";
+    var tasaConv = 1;
+    if (moneda === "$" && tasaUSD > 0) tasaConv = tasaUSD;
+    else if (moneda === "₮" && tasaUSDT > 0) tasaConv = tasaUSDT;
+    
+    var saldoSistemaBs = Math.abs(d.enSistema) * tasaConv;
+    var diffBs = Math.abs(d.diferencia) * tasaConv;
+    var umbralEfectivoBs = _calcularUmbralEfectivo(saldoSistemaBs);
+    
+    var item = {
+      cuenta: d.cuenta,
+      enSistema: d.enSistema,
+      enReal: d.enReal,
+      diferencia: d.diferencia,
+      moneda: moneda,
+      diffBs: diffBs,
+      umbralEfectivoBs: umbralEfectivoBs,
+      requiereRevision: diffBs > cfg.revision
+    };
+    
+    if (diffBs <= umbralEfectivoBs) {
+      autoAjustables.push(item);
+    } else {
+      incidentes.push(item);
+    }
+  }
+  return { autoAjustables: autoAjustables, incidentes: incidentes };
+}
+
+function _conciliacionYaProcesada(idempotenciaKey) {
+  if (!idempotenciaKey) return null;
+  var ss = obtenerSpreadsheet();
+  var sheet = ss.getSheetByName("AUDIT_LOG");
+  if (!sheet) return null;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  
+  var data = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
+  for (var i = 0; i < data.length; i++) {
+    var keyFila = data[i][2] ? data[i][2].toString().trim() : "";
+    if (keyFila !== idempotenciaKey) continue;
+    var accion = data[i][1] ? data[i][1].toString() : "";
+    if (accion.indexOf("CONCILIACION") === -1 && accion.indexOf("AUTO_AJUSTE") === -1) continue;
+    return {
+      accion: accion,
+      estado: data[i][8] ? data[i][8].toString() : "",
+      cuenta: data[i][7] ? data[i][7].toString() : "",
+      montoDiff: data[i][6] || 0,
+      moneda: data[i][9] ? data[i][9].toString() : ""
+    };
+  }
+  return null;
+}
+
+function _registrarIncidenteAUDIT(incidente, idempotenciaKey) {
+  try {
+    var ss = obtenerSpreadsheet();
+    var sheet = ss.getSheetByName("AUDIT_LOG");
+    if (!sheet) return;
+    sheet.appendRow([
+      new Date(),
+      "INCIDENTE_CONCILIACION",
+      idempotenciaKey,
+      "", "",
+      "Diferencia " + incidente.diferencia.toFixed(2) + " " + incidente.moneda +
+        " excede umbral " + incidente.umbralEfectivoBs.toFixed(2) + " Bs",
+      incidente.diferencia,
+      incidente.cuenta,
+      "INCIDENTE_PENDIENTE",
+      incidente.moneda
+    ]);
+  } catch (e) { Logger.log("Error AUDIT_LOG incidente: " + e); }
+}
+
+function _registrarAutoAjusteAUDIT(auto, idempotenciaKey, idTx) {
+  try {
+    var ss = obtenerSpreadsheet();
+    var sheet = ss.getSheetByName("AUDIT_LOG");
+    if (!sheet) return;
+    var estado = auto.requiereRevision ? "AUTO_AJUSTADO_REVISAR" : "AUTO_AJUSTADO";
+    sheet.appendRow([
+      new Date(),
+      "AUTO_AJUSTE_CONCILIACION",
+      idempotenciaKey,
+      idTx, "",
+      "Diferencia " + auto.diferencia.toFixed(2) + " " + auto.moneda +
+        " dentro de umbral " + auto.umbralEfectivoBs.toFixed(2) + " Bs",
+      auto.diferencia,
+      auto.cuenta,
+      estado,
+      auto.moneda
+    ]);
+  } catch (e) { Logger.log("Error AUDIT_LOG auto-ajuste: " + e); }
 }
