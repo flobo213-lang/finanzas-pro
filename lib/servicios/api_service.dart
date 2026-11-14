@@ -7,7 +7,6 @@ import 'cache_service.dart';
 import 'queue_service.dart';
 
 class ApiService {
-  // URL actualizada a la Versión 241
   static const String urlAppScript =
       "https://script.google.com/macros/s/AKfycbxHbyaEfNTGUfiP9-JlqVfvmdtbUNGDyexhg7XKZ7KA02AG6zHWOBnwxj4Q9KTeYjP5AQ/exec";
 
@@ -20,7 +19,6 @@ class ApiService {
     bool permitirCola = true,
   }) async {
     try {
-      // Clave única por operación para evitar duplicados
       payload['idempotenciaKey'] ??=
           DateTime.now().millisecondsSinceEpoch.toString() +
               "-" +
@@ -32,7 +30,6 @@ class ApiService {
 
       if (kDebugMode) print("=== ENVIANDO GET $action ===");
 
-      // SIN HEADERS PERSONALIZADOS: Evita el bloqueo de CORS en Flutter Web
       final response = await http
           .get(
             Uri.parse(url),

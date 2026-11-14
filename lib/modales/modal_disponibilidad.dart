@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../servicios/api_service.dart';
 import '../servicios/cache_service.dart';
+import 'package:uuid/uuid.dart';
 
 class ModalDisponibilidad extends StatefulWidget {
   final double tasaUSD;
@@ -30,6 +31,7 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
   bool _procesando = false;
   double _ratioMargen = 1.2487033;
   bool _sincronizando = false;
+  String? _idempotenciaKeyPendiente;
 
   final List<Map<String, dynamic>> _cuentas = [
     {
@@ -347,6 +349,12 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
     _saldosControllers.forEach((cuenta, ctrl) {
       nuevosSaldos[cuenta] = _parseInput(ctrl.text);
     });
+    _idempotenciaKeyPendiente ??= const Uuid().v4();
+
+    Map<String, String> monedas = {};
+    for (var cta in _cuentas) {
+      monedas[cta['nombre']] = cta['moneda'];
+    }
 
     final payload = {
       "tasaUSD": tasaUSD,
@@ -354,7 +362,10 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
       "tasaEUR": tasaEUR,
       "tasaUSDTParalelo": tasaParalelo,
       "saldos": nuevosSaldos,
+      "monedas": monedas,
+      "idempotenciaKey": _idempotenciaKeyPendiente!,
     };
+    
     try {
       final res = await ApiService.registrarAccionConRespuesta(
           "actualizarSaldosYTasas", payload);
@@ -363,6 +374,7 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
       setState(() => _procesando = false);
 
       if (res['status'] == "DESCUADRE") {
+        _idempotenciaKeyPendiente = null;
         final List difs = (res['diferencias'] as List?) ?? [];
         await _mostrarDialogoDescuadre(difs);
         return;
@@ -375,14 +387,25 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
         "tasaUSDTParalelo": tasaParalelo,
         "ratioMargen": _ratioMargen,
       });
-      await CacheService.guardarSaldos({
-        "saldos": nuevosSaldos,
-      });
+      
+      // Importante: Ya NO guardamos saldos localmente, forzamos a que se actualicen del servidor
+      await CacheService.marcarSaldosViejos();
 
       if (!mounted) return;
 
       if (res['status'] == "SUCCESS" || res['exito'] == true) {
-        _mostrarMensaje("Saldos y tasas actualizados", Colors.green.shade800);
+        final autoAjustados = res['autoAjustados'];
+        final n = (autoAjustados is List) ? autoAjustados.length : 0;
+        
+        if (n > 0) {
+          _mostrarMensaje(
+              "Saldos actualizados. Se aplicaron $n auto-ajuste(s) de conciliación.",
+              Colors.green.shade800);
+        } else {
+          _mostrarMensaje("Saldos y tasas actualizados", Colors.green.shade800);
+        }
+        
+        _idempotenciaKeyPendiente = null;
         Navigator.pop(context, true);
       } else {
         _mostrarMensaje(
@@ -395,6 +418,7 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
       if (mounted) setState(() => _procesando = false);
     }
   }
+    
 
   // ============================================================
   // DIÁLOGO DE DESCUADRE
@@ -1175,7 +1199,9 @@ class _ModalDisponibilidadState extends State<ModalDisponibilidad> {
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
                 textInputAction: TextInputAction.next,
-                onChanged: (_) => setState(() {}),
+                onChanged: (_) => setState(() {
+                  _idempotenciaKeyPendiente = null;
+                }),
                 style: TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.bold,
