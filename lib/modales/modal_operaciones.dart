@@ -385,6 +385,53 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
 
   String _monedaCalcTraspasoEfectiva() =>
       _monedaCalcTraspaso ?? _monedaParaCuenta(_cuentaOrigenTraspaso);
+  void _ciclarMonedaEgreso() {
+    final nativa = _monedaParaCuenta(_cuentaEgresoActual);
+    final actual = _monedaCalcEgresoEfectiva();
+    List<String> opciones = ["BS", "USD", "USDT"];
+    int idx = opciones.indexOf(actual);
+    if (idx == -1) idx = 0;
+    String siguiente = opciones[(idx + 1) % opciones.length];
+    setState(() {
+      if (siguiente == nativa) {
+        _monedaCalcEgreso = null;
+      } else {
+        _monedaCalcEgreso = siguiente;
+      }
+    });
+  }
+
+  void _ciclarMonedaIngreso() {
+    final nativa = _monedaParaCuenta(_cuentaIngresoActual);
+    final actual = _monedaCalcIngresoEfectiva();
+    List<String> opciones = ["BS", "USD", "USDT"];
+    int idx = opciones.indexOf(actual);
+    if (idx == -1) idx = 0;
+    String siguiente = opciones[(idx + 1) % opciones.length];
+    setState(() {
+      if (siguiente == nativa) {
+        _monedaCalcIngreso = null;
+      } else {
+        _monedaCalcIngreso = siguiente;
+      }
+    });
+  }
+
+  void _ciclarMonedaTraspaso() {
+    final nativa = _monedaParaCuenta(_cuentaOrigenTraspaso);
+    final actual = _monedaCalcTraspasoEfectiva();
+    List<String> opciones = ["BS", "USD", "USDT"];
+    int idx = opciones.indexOf(actual);
+    if (idx == -1) idx = 0;
+    String siguiente = opciones[(idx + 1) % opciones.length];
+    setState(() {
+      if (siguiente == nativa) {
+        _monedaCalcTraspaso = null;
+      } else {
+        _monedaCalcTraspaso = siguiente;
+      }
+    });
+  }
 
   Future<void> _elegirMonedaCalc({required bool esEgreso}) async {
     final actual =
@@ -1970,7 +2017,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
                         onSubmitted: (_) => _agregarPartidaEgreso(),
                         decoration: _inputDecMonto(
                           monedaCalc: monedaCalc,
-                          onTapCalc: () => _elegirMonedaCalc(esEgreso: true),
+                          onTapCalc: _ciclarMonedaEgreso,
                         ),
                       ),
                     ),
@@ -2327,7 +2374,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
                         onSubmitted: (_) => _agregarPartidaIngreso(),
                         decoration: _inputDecMonto(
                           monedaCalc: monedaCalc,
-                          onTapCalc: _elegirMonedaCalcIngreso,
+                          onTapCalc: _ciclarMonedaIngreso,
                         ),
                       ),
                     ),
@@ -2645,7 +2692,7 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
                   onChanged: (_) => setState(() {}),
                   decoration: _inputDecMonto(
                     monedaCalc: monedaCalc,
-                    onTapCalc: () => _elegirMonedaCalc(esEgreso: false),
+                    onTapCalc: _ciclarMonedaTraspaso,
                     hint: "Monto a Traspasar",
                   ),
                 ),
@@ -3150,13 +3197,16 @@ class _ModalOperacionesState extends State<ModalOperaciones> {
       suffixIcon: InkWell(
         onTap: onTapCalc,
         borderRadius: BorderRadius.circular(6),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F52BA).withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(4),
+          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.calculate_outlined,
-                  size: 12, color: Color(0xFF0F52BA)),
+              const Icon(Icons.swap_horiz, size: 14, color: Color(0xFF0F52BA)),
               const SizedBox(width: 4),
               Text(monedaCalc,
                   style: const TextStyle(
