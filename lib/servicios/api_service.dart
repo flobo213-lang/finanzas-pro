@@ -7,15 +7,12 @@ import 'cache_service.dart';
 import 'queue_service.dart';
 
 class ApiService {
+  // URL actualizada a la Versión 241
   static const String urlAppScript =
-      "https://script.google.com/macros/s/AKfycbzRs6qTqsJN9yFS239aAM9LSYv6WPDqe_ZhjaYpw4Em-EgHuS9CtqHKBBJxMd16cQVVwg/exec";
-
-  static const Map<String, String> _headersCORS = {
-    'Content-Type': 'text/plain;charset=utf-8',
-  };
+      "https://script.google.com/macros/s/AKfycbxHbyaEfNTGUfiP9-JlqVfvmdtbUNGDyexhg7XKZ7KA02AG6zHWOBnwxj4Q9KTeYjP5AQ/exec";
 
   // ==========================================================================
-  // POST CON MANEJO DE 302 Y COLA DE PENDIENTES
+  // POST CON MANEJO DE 302 Y COLA DE PENDIENTES (USANDO GET LIMPIO)
   // ==========================================================================
   static Future<Map<String, dynamic>> _postConManejoRedirect(
     String action,
@@ -28,16 +25,19 @@ class ApiService {
           DateTime.now().millisecondsSinceEpoch.toString() +
               "-" +
               action.hashCode.toString();
+
       final payloadJson = jsonEncode(payload);
       final encodedPayload = Uri.encodeComponent(payloadJson);
       final url = "$urlAppScript?action=$action&payload=$encodedPayload";
 
-      if (kDebugMode) print("=== ENVIANDO GET-POST $action ===");
+      if (kDebugMode) print("=== ENVIANDO GET $action ===");
 
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {'Content-Type': 'text/plain;charset=utf-8'},
-      ).timeout(const Duration(seconds: 120));
+      // SIN HEADERS PERSONALIZADOS: Evita el bloqueo de CORS en Flutter Web
+      final response = await http
+          .get(
+            Uri.parse(url),
+          )
+          .timeout(const Duration(seconds: 120));
 
       if (kDebugMode) {
         print("=== RESPUESTA $action (${response.statusCode}) ===");
@@ -50,7 +50,11 @@ class ApiService {
             if (decoded['status'] == 'ERROR') {
               return decoded;
             }
-            await _aplicarEfectosLocales(action, payload);
+
+            final esDuplicado = decoded['duplicado'] == true;
+            if (!esDuplicado) {
+              await _aplicarEfectosLocales(action, payload);
+            }
             await CacheService.marcarSaldosViejos();
             return decoded;
           }
@@ -65,8 +69,7 @@ class ApiService {
           'status': 'PENDIENTE',
           'exito': true,
           'pendiente': true,
-          'mensaje':
-              'Guardado localmente. Se sincronizará automáticamente en 1 minuto.',
+          'mensaje': 'Guardado localmente. Se sincronizará automáticamente.',
         };
       }
 
@@ -75,7 +78,7 @@ class ApiService {
         "mensaje": "Servidor respondió con código ${response.statusCode}"
       };
     } catch (e) {
-      if (kDebugMode) print("Error POST $action: $e");
+      if (kDebugMode) print("Error GET $action: $e");
 
       if (permitirCola) {
         await _encolarOperacion(action, payload);
@@ -83,8 +86,7 @@ class ApiService {
           'status': 'PENDIENTE',
           'exito': true,
           'pendiente': true,
-          'mensaje':
-              'Guardado localmente. Se sincronizará automáticamente en 1 minuto.',
+          'mensaje': 'Guardado localmente. Se sincronizará automáticamente.',
         };
       }
 
@@ -213,7 +215,6 @@ class ApiService {
       final response = await http
           .get(
             Uri.parse("$urlAppScript?action=obtenerTasas"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
@@ -234,14 +235,13 @@ class ApiService {
       "tasaUSD": 827.74,
       "tasaUSDT": 965.00,
     };
-  } // <--- ESTA ES LA LLAVE QUE FALTABA (Cierra obtenerTasas)
+  }
 
   static Future<Map<String, dynamic>> obtenerTasasPorFecha(String fecha) async {
     try {
       final response = await http
           .get(
             Uri.parse("$urlAppScript?action=obtenerTasasPorFecha&fecha=$fecha"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 30));
 
@@ -253,7 +253,7 @@ class ApiService {
       if (kDebugMode) print("Error obtenerTasasPorFecha: $e");
     }
     return {"status": "ERROR", "mensaje": "No se pudo obtener tasa histórica"};
-  } // <--- ESTA LLAVE CIERRA LA NUEVA FUNCION
+  }
 
   static Future<Map<String, dynamic>> obtenerSaldos() async {
     if (await CacheService.saldosFrescos()) {
@@ -264,7 +264,6 @@ class ApiService {
       final response = await http
           .get(
             Uri.parse("$urlAppScript?action=obtenerSaldos"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
@@ -287,7 +286,6 @@ class ApiService {
       final response = await http
           .get(
             Uri.parse("$urlAppScript?action=verificarEstadoDelDia"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
@@ -317,7 +315,6 @@ class ApiService {
       final response = await http
           .get(
             Uri.parse("$urlAppScript?action=buscarTrabajador&cedula=$cedula"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
@@ -352,7 +349,6 @@ class ApiService {
             .get(
               Uri.parse(
                   "$urlAppScript?action=obtenerResumenGerencial&fecha=$fecha"),
-              headers: _headersCORS,
             )
             .timeout(const Duration(seconds: 120));
         if (response.statusCode == 200) {
@@ -393,7 +389,6 @@ class ApiService {
           .get(
             Uri.parse(
                 "$urlAppScript?action=obtenerConsultasConFecha&fechaDesde=$fechaDesde&fechaHasta=$fh"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
@@ -423,9 +418,8 @@ class ApiService {
       {bool todos = false}) async {
     try {
       final url = "$urlAppScript?action=obtenerPendientes&todos=$todos";
-      final response = await http
-          .get(Uri.parse(url), headers: _headersCORS)
-          .timeout(const Duration(seconds: 120));
+      final response =
+          await http.get(Uri.parse(url)).timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
         if (decoded is Map<String, dynamic>) {
@@ -441,9 +435,8 @@ class ApiService {
   static Future<Map<String, dynamic>> obtenerPendientesPorPagar() async {
     try {
       final url = "$urlAppScript?action=obtenerPendientesPorPagar";
-      final response = await http
-          .get(Uri.parse(url), headers: _headersCORS)
-          .timeout(const Duration(seconds: 120));
+      final response =
+          await http.get(Uri.parse(url)).timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
         if (decoded is Map<String, dynamic>) {
@@ -473,7 +466,6 @@ class ApiService {
           .get(
             Uri.parse(
                 "$urlAppScript?action=obtenerResumenGerencial&fecha=$fecha"),
-            headers: _headersCORS,
           )
           .timeout(const Duration(seconds: 120));
       if (response.statusCode == 200) {
