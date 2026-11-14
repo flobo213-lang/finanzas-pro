@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart'; // <-- IMPORTACIÓN AGREGADA
 
 import 'cache_service.dart';
 import 'queue_service.dart';
@@ -9,6 +10,10 @@ import 'queue_service.dart';
 class ApiService {
   static const String urlAppScript =
       "https://script.google.com/macros/s/AKfycbxHbyaEfNTGUfiP9-JlqVfvmdtbUNGDyexhg7XKZ7KA02AG6zHWOBnwxj4Q9KTeYjP5AQ/exec";
+
+  static const Map<String, String> _headersCORS = {
+    'Content-Type': 'text/plain;charset=utf-8',
+  };
 
   // ==========================================================================
   // POST CON MANEJO DE 302 Y COLA DE PENDIENTES
@@ -19,11 +24,8 @@ class ApiService {
     bool permitirCola = true,
   }) async {
     try {
-      // Clave única por operación para evitar duplicados
-      payload['idempotenciaKey'] ??=
-          DateTime.now().millisecondsSinceEpoch.toString() +
-              "-" +
-              action.hashCode.toString();
+      // B3 FIX: Clave única por operación usando UUID v4
+      payload['idempotenciaKey'] ??= const Uuid().v4();
 
       // Armamos el JSON con la acción y el payload
       final body = jsonEncode({
@@ -33,9 +35,8 @@ class ApiService {
 
       if (kDebugMode) print("=== ENVIANDO POST $action ===");
 
-      // Usamos http.post en lugar de http.get para evitar límite de URL
       final response = await http.post(
-        Uri.parse(urlAppScript), // La URL va limpia, sin parámetros
+        Uri.parse(urlAppScript), 
         body: body,
       ).timeout(const Duration(seconds: 120));
 
@@ -50,7 +51,12 @@ class ApiService {
             if (decoded['status'] == 'ERROR') {
               return decoded;
             }
-            await _aplicarEfectosLocales(action, payload);
+            
+            // B2 FIX: Si el backend dice que es duplicado, NO aplicar efectos locales
+            final esDuplicado = decoded['duplicado'] == true;
+            if (!esDuplicado) {
+              await _aplicarEfectosLocales(action, payload);
+            }
             await CacheService.marcarSaldosViejos();
             return decoded;
           }
@@ -65,8 +71,7 @@ class ApiService {
           'status': 'PENDIENTE',
           'exito': true,
           'pendiente': true,
-          'mensaje':
-              'Guardado localmente. Se sincronizará automáticamente en 1 minuto.',
+          'mensaje': 'Guardado localmente. Se sincronizará automáticamente en 1 minuto.',
         };
       }
 
@@ -83,8 +88,7 @@ class ApiService {
           'status': 'PENDIENTE',
           'exito': true,
           'pendiente': true,
-          'mensaje':
-              'Guardado localmente. Se sincronizará automáticamente en 1 minuto.',
+          'mensaje': 'Guardado localmente. Se sincronizará automáticamente en 1 minuto.',
         };
       }
 
@@ -196,7 +200,7 @@ class ApiService {
     return await _postConManejoRedirect(
       action,
       payload,
-      permitirCola: false,
+      permitirCola: false, // B15 FIX: cableado a fuego para evitar bucles infinitos
     );
   }
 
