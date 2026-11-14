@@ -28,15 +28,20 @@ class ApiService {
           DateTime.now().millisecondsSinceEpoch.toString() +
               "-" +
               action.hashCode.toString();
-      final payloadJson = jsonEncode(payload);
-      final encodedPayload = Uri.encodeComponent(payloadJson);
-      final url = "$urlAppScript?action=$action&payload=$encodedPayload";
 
-      if (kDebugMode) print("=== ENVIANDO GET-POST $action ===");
+      // Armamos el JSON con la acción y el payload
+      final body = jsonEncode({
+        "action": action,
+        "payload": payload,
+      });
 
-      final response = await http.get(
-        Uri.parse(url),
+      if (kDebugMode) print("=== ENVIANDO POST $action ===");
+
+      // AQUÍ ESTÁ EL CAMBIO: Usamos http.post en lugar de http.get
+      final response = await http.post(
+        Uri.parse(urlAppScript), // La URL va limpia, sin parámetros
         headers: {'Content-Type': 'text/plain;charset=utf-8'},
+        body: body,
       ).timeout(const Duration(seconds: 120));
 
       if (kDebugMode) {
