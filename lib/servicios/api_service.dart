@@ -40,7 +40,6 @@ class ApiService {
       // AQUÍ ESTÁ EL CAMBIO: Usamos http.post en lugar de http.get
       final response = await http.post(
         Uri.parse(urlAppScript), // La URL va limpia, sin parámetros
-        headers: {'Content-Type': 'text/plain;charset=utf-8'},
         body: body,
       ).timeout(const Duration(seconds: 120));
 
