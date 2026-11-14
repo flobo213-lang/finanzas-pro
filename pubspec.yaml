@@ -10,7 +10,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
+    uuid: ^4.5.1
+    synchronized: ^3.1.0
+    
   # Gestor de estado global
   provider: ^6.1.1
 
